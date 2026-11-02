@@ -154,7 +154,10 @@ private fun copyRgbaFrame(image: ImageProxy): CameraRgbaFrame {
             output[dst] = source.get(src)
             output[dst + 1] = source.get(src + 1)
             output[dst + 2] = source.get(src + 2)
-            output[dst + 3] = source.get(src + 3)
+            // Una cámara no captura transparencia: el píxel de la escena es opaco.
+            // Se conserva RGB sin cambios y se fija A=255 para evitar transparencias
+            // accidentales al convertir el fotograma a Bitmap/PNG.
+            output[dst + 3] = 0xFF.toByte()
         }
     }
     return CameraRgbaFrame(cropWidth, cropHeight, output, image.imageInfo.rotationDegrees)
@@ -276,10 +279,18 @@ fun PixelCameraScreen(
     val latestRgbaFrame = remember { AtomicReference<CameraRgbaFrame?>(null) }
     val lastRgbaCopyAtMs = remember { AtomicLong(0L) }
 
+    // Este executor se reserva para ImageAnalysis. ImageCapture usa el executor
+    // principal para que sus callbacks no dependan de un hilo que se cierra al salir.
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
+    val cameraProviderForCleanup = remember { AtomicReference<ProcessCameraProvider?>(null) }
+    val imageAnalysisForCleanup = remember { AtomicReference<ImageAnalysis?>(null) }
 
     DisposableEffect(Unit) {
         onDispose {
+            // Primero detener las entregas de análisis y desvincular los use cases;
+            // después cerrar el executor que los atendía.
+            imageAnalysisForCleanup.getAndSet(null)?.clearAnalyzer()
+            cameraProviderForCleanup.getAndSet(null)?.unbindAll()
             cameraExecutor.shutdown()
         }
     }
@@ -307,6 +318,9 @@ fun PixelCameraScreen(
         }
 
         try {
+            // En un cambio de lente/flash, retirar el analyzer anterior antes
+            // de desvincular sus use cases.
+            imageAnalysisForCleanup.getAndSet(null)?.clearAnalyzer()
             provider.unbindAll()
             activeCamera = null
             imageCaptureInstance = null
@@ -461,6 +475,8 @@ fun PixelCameraScreen(
             }
 
             rawCaptureSupported = capture.outputFormat == ImageCapture.OUTPUT_FORMAT_RAW_JPEG
+            cameraProviderForCleanup.set(provider)
+            imageAnalysisForCleanup.set(imageAnalysis)
             activeCamera = camera
             imageCaptureInstance = capture
 
@@ -993,7 +1009,7 @@ fun PixelCameraScreen(
                                         stillCapture.takePicture(
                                             rawOptions,
                                             jpegOptions,
-                                            cameraExecutor,
+                                            ContextCompat.getMainExecutor(context),
                                             object : ImageCapture.OnImageSavedCallback {
                                                 override fun onImageSaved(results: ImageCapture.OutputFileResults) {
                                                     when (results.imageFormat) {
