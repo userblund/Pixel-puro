@@ -10,8 +10,10 @@ import android.graphics.Matrix
 import android.graphics.PixelFormat
 import android.media.ExifInterface
 import android.os.Environment
+import android.os.SystemClock
 import android.view.HapticFeedbackConstants
 import android.view.Surface
+import android.util.Size
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
@@ -107,6 +109,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.log2
 
@@ -287,6 +290,7 @@ fun PixelCameraScreen(
     var rawCaptureSupported by remember { mutableStateOf(false) }
     // Último fotograma completo RGBA_8888, copiado antes de cerrar ImageProxy.
     val latestRgbaFrame = remember { AtomicReference<CameraRgbaFrame?>(null) }
+    val lastRgbaCopyAtMs = remember { AtomicLong(0L) }
 
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
 
@@ -324,6 +328,7 @@ fun PixelCameraScreen(
             imageCaptureInstance = null
             rawCaptureSupported = false
             latestRgbaFrame.set(null)
+            lastRgbaCopyAtMs.set(0L)
 
             val preview = Preview.Builder().build().also {
                 it.surfaceProvider = previewView.surfaceProvider
@@ -355,13 +360,20 @@ fun PixelCameraScreen(
 
             // ImageAnalysis convierte fotogramas del flujo de análisis a RGBA_8888.
             val imageAnalysis = ImageAnalysis.Builder()
+                // Solicita 1080p; CameraX selecciona una resolución realmente admitida por cada lente.
+                .setTargetResolution(Size(1920, 1080))
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
                 .build()
 
             imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
                 try {
-                    latestRgbaFrame.set(copyRgbaFrame(imageProxy))
+                    // Copiar a 10 fps evita asignar un buffer completo en cada frame de 30/60 fps.
+                    val nowMs = SystemClock.elapsedRealtime()
+                    val previousCopyMs = lastRgbaCopyAtMs.get()
+                    if (nowMs - previousCopyMs >= 100L && lastRgbaCopyAtMs.compareAndSet(previousCopyMs, nowMs)) {
+                        latestRgbaFrame.set(copyRgbaFrame(imageProxy))
+                    }
                     val plane = imageProxy.planes[0]
                     val buffer = plane.buffer
                     val bufferStart = buffer.position()
