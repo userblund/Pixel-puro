@@ -18,12 +18,6 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.WindowInsetsSides
-import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.only
-import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
@@ -137,8 +131,7 @@ fun FullDeviceGalleryDialog(
     Column(
         modifier = Modifier.fillMaxSize()
             .background(DarkBackground)
-            .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(8.dp)
+                        .padding(8.dp)
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().background(DarkSurface)
