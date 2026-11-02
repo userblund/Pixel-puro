@@ -21,7 +21,6 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
-import androidx.camera.core.ExperimentalImageCaptureOutputFormat
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.core.UseCaseGroup
@@ -202,7 +201,7 @@ private fun rgbaFrameToBitmap(frame: CameraRgbaFrame): Bitmap {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalImageCaptureOutputFormat::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PixelCameraScreen(
     onPhotoCaptured: (Bitmap) -> Unit,
