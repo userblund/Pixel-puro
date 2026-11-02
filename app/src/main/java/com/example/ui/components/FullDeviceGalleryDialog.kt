@@ -13,10 +13,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -37,6 +44,28 @@ import com.example.ui.theme.EmeraldAccent
 import com.example.ui.theme.PressStart2PFontFamily
 import com.example.ui.theme.SilkscreenFontFamily
 import com.example.ui.theme.TextMuted
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+
+private enum class GalleryDateLayout(val preferenceValue: Int, val label: String) {
+    RELATIVE_TODAY_YESTERDAY(0, "FECHA + HOY/AYER"),
+    RELATIVE_TODAY_ONLY(1, "FECHA + HOY"),
+    FULL_DATES(2, "FECHA COMPLETA"),
+    NO_DATE_HEADERS(3, "SIN FECHAS");
+
+    companion object {
+        fun fromPreference(value: Int): GalleryDateLayout =
+            entries.firstOrNull { it.preferenceValue == value } ?: RELATIVE_TODAY_YESTERDAY
+    }
+}
+
+private data class DatedGalleryGroup(
+    val date: LocalDate,
+    val photos: List<GalleryMediaItem>
+)
 
 @Composable
 fun FullDeviceGalleryDialog(
@@ -46,6 +75,44 @@ fun FullDeviceGalleryDialog(
     onRefresh: () -> Unit,
     onClose: () -> Unit
 ) {
+    val context = LocalContext.current
+    val preferences = remember(context) {
+        context.getSharedPreferences("pixel_puro_gallery", android.content.Context.MODE_PRIVATE)
+    }
+    var dateLayout by remember {
+        mutableStateOf(GalleryDateLayout.fromPreference(preferences.getInt("date_layout", 0)))
+    }
+    var isLayoutMenuExpanded by remember { mutableStateOf(false) }
+
+    val today = LocalDate.now()
+    val zone = ZoneId.systemDefault()
+    val dateFormatter = remember {
+        DateTimeFormatter.ofPattern("d 'de' MMMM 'de' yyyy", Locale("es", "PY"))
+    }
+    val groups = remember(photos, today) {
+        photos.groupBy { photo ->
+            Instant.ofEpochSecond(photo.dateAdded).atZone(zone).toLocalDate()
+        }.map { (date, datePhotos) ->
+            DatedGalleryGroup(date, datePhotos)
+        }.sortedByDescending { it.date }
+    }
+
+    fun headerFor(date: LocalDate): String {
+        val formatted = date.format(dateFormatter)
+        val capitalized = formatted.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale("es", "PY")) else it.toString() }
+        return when (dateLayout) {
+            GalleryDateLayout.RELATIVE_TODAY_YESTERDAY -> when (date) {
+                today -> "$capitalized (Hoy)"
+                today.minusDays(1) -> "$capitalized (Ayer)"
+                else -> capitalized
+            }
+            GalleryDateLayout.RELATIVE_TODAY_ONLY ->
+                if (date == today) "$capitalized (Hoy)" else capitalized
+            GalleryDateLayout.FULL_DATES -> capitalized
+            GalleryDateLayout.NO_DATE_HEADERS -> ""
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -76,7 +143,39 @@ fun FullDeviceGalleryDialog(
                     fontFamily = SilkscreenFontFamily
                 )
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box {
+                    Text(
+                        text = "ORDEN: ${dateLayout.label}",
+                        color = CyanAccent,
+                        fontSize = 7.sp,
+                        fontFamily = SilkscreenFontFamily,
+                        modifier = Modifier.clickable { isLayoutMenuExpanded = true }
+                    )
+                    DropdownMenu(
+                        expanded = isLayoutMenuExpanded,
+                        onDismissRequest = { isLayoutMenuExpanded = false },
+                        modifier = Modifier.background(DarkSurface)
+                    ) {
+                        GalleryDateLayout.entries.forEach { option ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = option.label,
+                                        color = if (option == dateLayout) CyanAccent else Color.White,
+                                        fontSize = 11.sp,
+                                        fontFamily = SilkscreenFontFamily
+                                    )
+                                },
+                                onClick = {
+                                    dateLayout = option
+                                    preferences.edit().putInt("date_layout", option.preferenceValue).apply()
+                                    isLayoutMenuExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
                 Text(
                     text = "RECARGAR",
                     color = CyanAccent,
@@ -114,43 +213,74 @@ fun FullDeviceGalleryDialog(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                items(photos, key = { it.id }) { photo ->
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .size(112.dp)
-                            .background(DarkSurface)
-                            .border(
-                                width = if (selectedItem?.id == photo.id) 2.dp else 1.dp,
-                                color = if (selectedItem?.id == photo.id) CyanAccent else DarkBorder,
-                                shape = RectangleShape
-                            )
-                            .clickable { onSelectPhoto(photo) }
-                    ) {
-                        AsyncImage(
-                            model = ImageRequest.Builder(LocalContext.current)
-                                .data(photo.uri)
-                                .crossfade(false)
-                                .build(),
-                            contentDescription = photo.name,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                        if (photo.isScreenshot) {
+                if (dateLayout == GalleryDateLayout.NO_DATE_HEADERS) {
+                    items(photos, key = { it.id }) { photo ->
+                        GalleryPhotoTile(photo, selectedItem?.id == photo.id, onSelectPhoto)
+                    }
+                } else {
+                    groups.forEach { group ->
+                        item(key = "date-${group.date}", span = { GridItemSpan(maxLineSpan) }) {
                             Text(
-                                text = "CAP",
-                                color = EmeraldAccent,
-                                fontSize = 7.sp,
-                                fontFamily = PressStart2PFontFamily,
+                                text = headerFor(group.date),
+                                color = Color.White,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier
-                                    .align(Alignment.BottomStart)
-                                    .background(Color.Black.copy(alpha = 0.8f))
-                                    .padding(horizontal = 3.dp, vertical = 2.dp)
+                                    .fillMaxWidth()
+                                    .padding(start = 4.dp, top = 14.dp, bottom = 8.dp)
                             )
+                        }
+                        items(
+                            items = group.photos,
+                            key = { photo -> photo.id }
+                        ) { photo ->
+                            GalleryPhotoTile(photo, selectedItem?.id == photo.id, onSelectPhoto)
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun GalleryPhotoTile(
+    photo: GalleryMediaItem,
+    isSelected: Boolean,
+    onSelectPhoto: (GalleryMediaItem) -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .size(112.dp)
+            .background(DarkSurface)
+            .border(
+                width = if (isSelected) 2.dp else 1.dp,
+                color = if (isSelected) CyanAccent else DarkBorder,
+                shape = RectangleShape
+            )
+            .clickable { onSelectPhoto(photo) }
+    ) {
+        AsyncImage(
+            model = ImageRequest.Builder(LocalContext.current)
+                .data(photo.uri)
+                .crossfade(false)
+                .build(),
+            contentDescription = photo.name,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize()
+        )
+        if (photo.isScreenshot) {
+            Text(
+                text = "CAP",
+                color = EmeraldAccent,
+                fontSize = 7.sp,
+                fontFamily = PressStart2PFontFamily,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .background(Color.Black.copy(alpha = 0.8f))
+                    .padding(horizontal = 3.dp, vertical = 2.dp)
+            )
         }
     }
 }
