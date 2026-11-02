@@ -40,6 +40,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -68,6 +70,7 @@ import com.example.ui.components.ColorAnalyzerSheet
 import com.example.ui.components.DeviceGalleryBottomBar
 import com.example.ui.components.FloatingOverlayPromptDialog
 import com.example.ui.components.GalleryPresetsSheet
+import com.example.ui.components.FullDeviceGalleryDialog
 import com.example.ui.components.IntegrityCheckDialog
 import com.example.ui.components.PixelEditorDialog
 import com.example.ui.components.ScreenVsBufferAnalyzerDialog
@@ -139,6 +142,7 @@ fun PixelPuroApp(
     var showAnalyzerSheet by remember { mutableStateOf(false) }
     var showEditorDialog by remember { mutableStateOf(false) }
     var showGallerySheet by remember { mutableStateOf(false) }
+    var showFullDeviceGallery by remember { mutableStateOf(false) }
     var showFloatingDialog by remember { mutableStateOf(false) }
     var showCalibrationDialog by remember { mutableStateOf(false) }
     var showScreenAnalyzerDialog by remember { mutableStateOf(false) }
@@ -149,23 +153,30 @@ fun PixelPuroApp(
     var returnToScreenAnalyzerAfterCapture by remember { mutableStateOf(false) }
     var calibrationColorTarget by remember { mutableStateOf<PixelColor?>(null) }
 
-    val mediaPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        Manifest.permission.READ_MEDIA_IMAGES
-    } else {
-        Manifest.permission.READ_EXTERNAL_STORAGE
+    val mediaPermissions = when {
+        Build.VERSION.SDK_INT >= 34 -> arrayOf(
+            Manifest.permission.READ_MEDIA_IMAGES,
+            Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+        )
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES)
+        else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+    }
+
+    fun checkMediaAccess(): Boolean = mediaPermissions.any {
+        ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
     }
 
     var hasMediaPermission by remember {
         mutableStateOf(
-            ContextCompat.checkSelfPermission(context, mediaPermission) == PackageManager.PERMISSION_GRANTED
+            checkMediaAccess()
         )
     }
 
     val requestMediaPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        hasMediaPermission = isGranted
-        if (isGranted) {
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        hasMediaPermission = checkMediaAccess()
+        if (hasMediaPermission) {
             viewModel.scanDevicePhotos(context, autoSelectLatest = true)
             Toast.makeText(context, "Fotos cargadas automáticamente", Toast.LENGTH_SHORT).show()
         }
@@ -175,7 +186,7 @@ fun PixelPuroApp(
         if (hasMediaPermission) {
             viewModel.scanDevicePhotos(context, autoSelectLatest = true)
         } else {
-            requestMediaPermissionLauncher.launch(mediaPermission)
+            requestMediaPermissionLauncher.launch(mediaPermissions)
         }
     }
 
@@ -688,9 +699,41 @@ fun PixelPuroApp(
                     },
                     onOpenCamera = {
                         showCameraScreen = true
+                    },
+                    onOpenFullGallery = {
+                        if (checkMediaAccess()) {
+                            viewModel.scanDevicePhotos(context, autoSelectLatest = false)
+                            showFullDeviceGallery = true
+                        } else {
+                            requestMediaPermissionLauncher.launch(mediaPermissions)
+                        }
                     }
                 )
             }
+        }
+    }
+
+
+    if (showFullDeviceGallery) {
+        Dialog(
+            onDismissRequest = { showFullDeviceGallery = false },
+            properties = DialogProperties(
+                usePlatformDefaultWidth = false,
+                decorFitsSystemWindows = false
+            )
+        ) {
+            FullDeviceGalleryDialog(
+                photos = devicePhotos,
+                selectedItem = selectedMediaItem,
+                onSelectPhoto = { photo ->
+                    viewModel.selectDevicePhoto(context, photo)
+                    showFullDeviceGallery = false
+                },
+                onRefresh = {
+                    viewModel.scanDevicePhotos(context, autoSelectLatest = false)
+                },
+                onClose = { showFullDeviceGallery = false }
+            )
         }
     }
 
