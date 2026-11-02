@@ -791,6 +791,9 @@ fun PixelCameraScreen(
                                 val targetRotation = previewViewInstance?.display?.rotation ?: Surface.ROTATION_0
                                 capture.targetRotation = targetRotation
                                 val rotation = activeCamera?.cameraInfo?.getSensorRotationDegrees(targetRotation) ?: 0
+                                var rawFileSaved = false
+                                var jpegFileSaved = false
+                                var jpegProcessed = false
 
                                 capture.takePicture(
                                     rawOptions,
@@ -798,8 +801,13 @@ fun PixelCameraScreen(
                                     cameraExecutor,
                                     object : ImageCapture.OnImageSavedCallback {
                                         override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                                            // RAW+JPEG invoca el callback dos veces: procesar solo JPEG.
-                                            if (outputFileResults.imageFormat != ImageFormat.JPEG) return
+                                            when (outputFileResults.imageFormat) {
+                                                ImageFormat.RAW_SENSOR -> rawFileSaved = true
+                                                ImageFormat.JPEG -> jpegFileSaved = true
+                                            }
+                                            // Esperar a que ambos archivos hayan terminado de escribirse.
+                                            if (!rawFileSaved || !jpegFileSaved || jpegProcessed) return
+                                            jpegProcessed = true
                                             try {
                                                 val decodedBitmap = BitmapFactory.decodeFile(jpegFile.absolutePath)
                                                     ?: throw IllegalStateException("No se pudo decodificar el JPEG")
