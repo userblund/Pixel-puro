@@ -372,7 +372,7 @@ fun ScreenVsBufferAnalyzerDialog(
                         ) {
                             Canvas(
                                 modifier = Modifier.fillMaxSize()
-                                    .pointerInput(normalizedRect, currentCameraPhoto) {
+                                    .pointerInput(currentCameraPhoto) {
                                         detectDragGestures { change, dragAmount ->
                                             change.consume()
                                             val scale = minOf(
