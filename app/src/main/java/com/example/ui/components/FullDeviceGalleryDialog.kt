@@ -58,7 +58,7 @@ private enum class GalleryDateLayout(val preferenceValue: Int, val label: String
 
     companion object {
         fun fromPreference(value: Int): GalleryDateLayout =
-            entries.firstOrNull { it.preferenceValue == value } ?: RELATIVE_TODAY_YESTERDAY
+            values().firstOrNull { it.preferenceValue == value } ?: RELATIVE_TODAY_YESTERDAY
     }
 }
 
@@ -93,7 +93,7 @@ fun FullDeviceGalleryDialog(
         photos.groupBy { photo ->
             Instant.ofEpochSecond(photo.dateAdded).atZone(zone).toLocalDate()
         }.map { (date, datePhotos) ->
-            DatedGalleryGroup(date, datePhotos)
+            DatedGalleryGroup(date, datePhotos.sortedByDescending { it.dateAdded })
         }.sortedByDescending { it.date }
     }
 
@@ -157,7 +157,7 @@ fun FullDeviceGalleryDialog(
                         onDismissRequest = { isLayoutMenuExpanded = false },
                         modifier = Modifier.background(DarkSurface)
                     ) {
-                        GalleryDateLayout.entries.forEach { option ->
+                        GalleryDateLayout.values().forEach { option ->
                             DropdownMenuItem(
                                 text = {
                                     Text(
