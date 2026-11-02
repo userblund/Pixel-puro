@@ -226,6 +226,9 @@ fun PixelCameraScreen(
 
         try {
             provider.unbindAll()
+            activeCamera = null
+            imageCaptureInstance = null
+            rawCaptureSupported = false
 
             val preview = Preview.Builder().build().also {
                 it.surfaceProvider = previewView.surfaceProvider
@@ -497,6 +500,7 @@ fun PixelCameraScreen(
                         oldRight: Int,
                         oldBottom: Int
                     ) {
+                        if (!cameraProviderFuture.isDone) return
                         val provider = runCatching { cameraProviderFuture.get() }.getOrNull() ?: return
                         if (previewView.viewPort != null) {
                             previewView.removeOnLayoutChangeListener(this)
