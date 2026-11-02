@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
 import android.graphics.Matrix
+import android.graphics.PixelFormat
 import android.media.ExifInterface
 import android.os.Environment
 import android.view.HapticFeedbackConstants
@@ -153,8 +154,8 @@ private data class CameraRgbaFrame(
  * La copia queda empaquetada como R,G,B,A sin padding entre píxeles ni filas.
  */
 private fun copyRgbaFrame(image: ImageProxy): CameraRgbaFrame {
-    require(image.format == ImageFormat.FLEX_RGBA_8888) {
-        "ImageAnalysis no entregó FLEX_RGBA_8888 (formato=undefined)."
+    require(image.format == PixelFormat.RGBA_8888) {
+        "ImageAnalysis no entregó PixelFormat.RGBA_8888 (formato=${image.format})."
     }
     val plane = image.planes.single()
     val source = plane.buffer
