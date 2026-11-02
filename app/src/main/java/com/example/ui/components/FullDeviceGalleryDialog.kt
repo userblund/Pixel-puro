@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -94,6 +95,8 @@ fun FullDeviceGalleryDialog(
         mutableStateOf(GalleryDateLayout.fromPreference(preferences.getInt("date_layout", 0)))
     }
     var isLayoutMenuExpanded by remember { mutableStateOf(false) }
+    var photoColumnCount by remember { mutableStateOf(preferences.getInt("full_gallery_column_count", 3).coerceIn(1, 16)) }
+    var isColumnMenuExpanded by remember { mutableStateOf(false) }
 
     val today = LocalDate.now()
     val zone = ZoneId.systemDefault()
@@ -134,75 +137,48 @@ fun FullDeviceGalleryDialog(
             .windowInsetsPadding(WindowInsets.safeDrawing)
             .padding(8.dp)
     ) {
-        Row(
+        Column(
             modifier = Modifier.fillMaxWidth().background(DarkSurface)
                 .border(1.dp, CyanAccent, RectangleShape)
-                .padding(horizontal = 10.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Column {
-                Text(
-                    text = "GALERÍA COMPLETA",
-                    color = Color.White,
-                    fontSize = 10.sp,
-                    fontFamily = PressStart2PFontFamily,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = "${photos.size} IMÁGENES DISPONIBLES",
-                    color = EmeraldAccent,
-                    fontSize = 8.sp,
-                    fontFamily = SilkscreenFontFamily
-                )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("GALERÍA COMPLETA", color = Color.White, fontSize = 10.sp, fontFamily = PressStart2PFontFamily, fontWeight = FontWeight.Bold)
+                    Text("${photos.size} IMÁGENES DISPONIBLES", color = EmeraldAccent, fontSize = 8.sp, fontFamily = SilkscreenFontFamily)
+                }
+                Text("CERRAR", color = Color.White, fontSize = 8.sp, fontFamily = SilkscreenFontFamily, modifier = Modifier.clickable { onClose() }.padding(start = 8.dp, vertical = 6.dp))
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Box {
-                    Text(
-                        text = "ORDEN: ${dateLayout.label}",
-                        color = CyanAccent,
-                        fontSize = 7.sp,
-                        fontFamily = SilkscreenFontFamily,
-                        modifier = Modifier.clickable { isLayoutMenuExpanded = true }
-                    )
-                    DropdownMenu(
-                        expanded = isLayoutMenuExpanded,
-                        onDismissRequest = { isLayoutMenuExpanded = false },
-                        modifier = Modifier.background(DarkSurface)
-                    ) {
-                        GalleryDateLayout.values().forEach { option ->
+                    Text("VISTAS: $photoColumnCount", color = CyanAccent, fontSize = 7.sp, fontFamily = SilkscreenFontFamily, modifier = Modifier.clickable { isColumnMenuExpanded = true })
+                    DropdownMenu(expanded = isColumnMenuExpanded, onDismissRequest = { isColumnMenuExpanded = false }, modifier = Modifier.background(DarkSurface)) {
+                        (1..16).forEach { count ->
                             DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        text = option.label,
-                                        color = if (option == dateLayout) CyanAccent else Color.White,
-                                        fontSize = 11.sp,
-                                        fontFamily = SilkscreenFontFamily
-                                    )
-                                },
-                                onClick = {
-                                    dateLayout = option
-                                    preferences.edit().putInt("date_layout", option.preferenceValue).apply()
-                                    isLayoutMenuExpanded = false
-                                }
+                                text = { Text("$count COLUMNA${if (count == 1) "" else "S"}", color = if (count == photoColumnCount) CyanAccent else Color.White, fontSize = 11.sp, fontFamily = SilkscreenFontFamily) },
+                                onClick = { photoColumnCount = count; preferences.edit().putInt("full_gallery_column_count", count).apply(); isColumnMenuExpanded = false }
                             )
                         }
                     }
                 }
-                Text(
-                    text = "RECARGAR",
-                    color = CyanAccent,
-                    fontSize = 8.sp,
-                    fontFamily = SilkscreenFontFamily,
-                    modifier = Modifier.clickable { onRefresh() }
-                )
-                Text(
-                    text = "CERRAR",
-                    color = Color.White,
-                    fontSize = 8.sp,
-                    fontFamily = SilkscreenFontFamily,
-                    modifier = Modifier.clickable { onClose() }
-                )
+                Box {
+                    Text("ORDEN: ${dateLayout.label}", color = CyanAccent, fontSize = 7.sp, fontFamily = SilkscreenFontFamily, modifier = Modifier.clickable { isLayoutMenuExpanded = true })
+                    DropdownMenu(expanded = isLayoutMenuExpanded, onDismissRequest = { isLayoutMenuExpanded = false }, modifier = Modifier.background(DarkSurface)) {
+                        GalleryDateLayout.values().forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option.label, color = if (option == dateLayout) CyanAccent else Color.White, fontSize = 11.sp, fontFamily = SilkscreenFontFamily) },
+                                onClick = { dateLayout = option; preferences.edit().putInt("date_layout", option.preferenceValue).apply(); isLayoutMenuExpanded = false }
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                Text("RECARGAR", color = CyanAccent, fontSize = 8.sp, fontFamily = SilkscreenFontFamily, modifier = Modifier.clickable { onRefresh() })
             }
         }
 
@@ -218,7 +194,7 @@ fun FullDeviceGalleryDialog(
         } else {
             Box(modifier = Modifier.fillMaxSize()) {
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 104.dp),
+                    columns = GridCells.Fixed(photoColumnCount),
                     state = gridState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(end = 18.dp, top = 4.dp, bottom = 4.dp),
