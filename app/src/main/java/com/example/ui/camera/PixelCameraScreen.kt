@@ -834,7 +834,7 @@ fun PixelCameraScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                // Calibration Profile Toggle & Guide: Pantalla PC (Recuadro Rojo)
+                // Perfil de calibración disponible y guía de encuadre de pantalla PC
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -887,6 +887,7 @@ fun PixelCameraScreen(
                                 fontWeight = FontWeight.Bold
                             )
                         }
+                    }
                 }
 
                 // Controls Row: [ GIRAR ] - [ DISPARAR PNG ] - [ FLASH ]
