@@ -3,19 +3,25 @@ package com.example.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
@@ -23,16 +29,19 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.model.GalleryMediaItem
@@ -44,6 +53,7 @@ import com.example.ui.theme.EmeraldAccent
 import com.example.ui.theme.PressStart2PFontFamily
 import com.example.ui.theme.SilkscreenFontFamily
 import com.example.ui.theme.TextMuted
+import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -62,10 +72,7 @@ private enum class GalleryDateLayout(val preferenceValue: Int, val label: String
     }
 }
 
-private data class DatedGalleryGroup(
-    val date: LocalDate,
-    val photos: List<GalleryMediaItem>
-)
+private data class DatedGalleryGroup(val date: LocalDate, val photos: List<GalleryMediaItem>)
 
 @Composable
 fun FullDeviceGalleryDialog(
@@ -89,8 +96,9 @@ fun FullDeviceGalleryDialog(
     val dateFormatter = remember {
         DateTimeFormatter.ofPattern("d 'de' MMMM 'de' yyyy", Locale("es", "PY"))
     }
-    val groups = remember(photos, today) {
-        photos.groupBy { photo ->
+    val sortedPhotos = remember(photos) { photos.sortedByDescending { it.dateAdded } }
+    val groups = remember(sortedPhotos, today) {
+        sortedPhotos.groupBy { photo ->
             Instant.ofEpochSecond(photo.dateAdded).atZone(zone).toLocalDate()
         }.map { (date, datePhotos) ->
             DatedGalleryGroup(date, datePhotos.sortedByDescending { it.dateAdded })
@@ -99,30 +107,28 @@ fun FullDeviceGalleryDialog(
 
     fun headerFor(date: LocalDate): String {
         val formatted = date.format(dateFormatter)
-        val capitalized = formatted.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale("es", "PY")) else it.toString() }
+        val capitalized = formatted.replaceFirstChar {
+            if (it.isLowerCase()) it.titlecase(Locale("es", "PY")) else it.toString()
+        }
         return when (dateLayout) {
             GalleryDateLayout.RELATIVE_TODAY_YESTERDAY -> when (date) {
                 today -> "$capitalized (Hoy)"
                 today.minusDays(1) -> "$capitalized (Ayer)"
                 else -> capitalized
             }
-            GalleryDateLayout.RELATIVE_TODAY_ONLY ->
-                if (date == today) "$capitalized (Hoy)" else capitalized
+            GalleryDateLayout.RELATIVE_TODAY_ONLY -> if (date == today) "$capitalized (Hoy)" else capitalized
             GalleryDateLayout.FULL_DATES -> capitalized
             GalleryDateLayout.NO_DATE_HEADERS -> ""
         }
     }
 
+    val gridState = rememberLazyGridState()
+
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(DarkBackground)
-            .padding(8.dp)
+        modifier = Modifier.fillMaxSize().background(DarkBackground).padding(8.dp)
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(DarkSurface)
+            modifier = Modifier.fillMaxWidth().background(DarkSurface)
                 .border(1.dp, CyanAccent, RectangleShape)
                 .padding(horizontal = 10.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -194,10 +200,7 @@ fun FullDeviceGalleryDialog(
         }
 
         if (photos.isEmpty()) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
                     text = "NO HAY IMÁGENES VISIBLES CON EL PERMISO ACTUAL",
                     color = TextMuted,
@@ -206,39 +209,83 @@ fun FullDeviceGalleryDialog(
                 )
             }
         } else {
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 104.dp),
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(4.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                if (dateLayout == GalleryDateLayout.NO_DATE_HEADERS) {
-                    items(photos, key = { it.id }) { photo ->
-                        GalleryPhotoTile(photo, selectedItem?.id == photo.id, onSelectPhoto)
-                    }
-                } else {
-                    groups.forEach { group ->
-                        item(key = "date-${group.date}", span = { GridItemSpan(maxLineSpan) }) {
-                            Text(
-                                text = headerFor(group.date),
-                                color = Color.White,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(start = 4.dp, top = 14.dp, bottom = 8.dp)
-                            )
-                        }
-                        items(
-                            items = group.photos,
-                            key = { photo -> photo.id }
-                        ) { photo ->
+            Box(modifier = Modifier.fillMaxSize()) {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = 104.dp),
+                    state = gridState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(end = 18.dp, top = 4.dp, bottom = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    if (dateLayout == GalleryDateLayout.NO_DATE_HEADERS) {
+                        items(sortedPhotos, key = { it.id }) { photo ->
                             GalleryPhotoTile(photo, selectedItem?.id == photo.id, onSelectPhoto)
+                        }
+                    } else {
+                        groups.forEach { group ->
+                            item(key = "date-${group.date}", span = { GridItemSpan(maxLineSpan) }) {
+                                Text(
+                                    text = headerFor(group.date),
+                                    color = Color.White,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.fillMaxWidth().padding(start = 4.dp, top = 14.dp, bottom = 8.dp)
+                                )
+                            }
+                            items(items = group.photos, key = { photo -> photo.id }) { photo ->
+                                GalleryPhotoTile(photo, selectedItem?.id == photo.id, onSelectPhoto)
+                            }
                         }
                     }
                 }
+                FastGalleryScrollbar(
+                    state = gridState,
+                    modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().zIndex(2f)
+                )
             }
+        }
+    }
+}
+
+@Composable
+private fun FastGalleryScrollbar(state: LazyGridState, modifier: Modifier = Modifier) {
+    val scope = rememberCoroutineScope()
+    BoxWithConstraints(
+        modifier = modifier.size(width = 16.dp, height = 1.dp).fillMaxHeight()
+            .background(Color.Transparent)
+            .pointerInput(state) {
+                detectDragGestures(
+                    onDragStart = { offset ->
+                        val layout = state.layoutInfo
+                        val maxIndex = (layout.totalItemsCount - layout.visibleItemsInfo.size).coerceAtLeast(0)
+                        val target = ((offset.y / size.height.coerceAtLeast(1)) * maxIndex).toInt()
+                        scope.launch { state.scrollToItem(target.coerceIn(0, maxIndex)) }
+                    },
+                    onDrag = { change, _ ->
+                        change.consume()
+                        val layout = state.layoutInfo
+                        val maxIndex = (layout.totalItemsCount - layout.visibleItemsInfo.size).coerceAtLeast(0)
+                        val target = ((change.position.y / size.height.coerceAtLeast(1)) * maxIndex).toInt()
+                        scope.launch { state.scrollToItem(target.coerceIn(0, maxIndex)) }
+                    }
+                )
+            }
+    ) {
+        val layout = state.layoutInfo
+        val total = layout.totalItemsCount
+        val visible = layout.visibleItemsInfo.size.coerceAtLeast(1)
+        val maxIndex = (total - visible).coerceAtLeast(1)
+        val thumbHeight = (maxHeight * (visible.toFloat() / total.coerceAtLeast(1))).coerceIn(30.dp, maxHeight)
+        val scrollFraction = (state.firstVisibleItemIndex.toFloat() / maxIndex).coerceIn(0f, 1f)
+        val thumbTop = (maxHeight - thumbHeight) * scrollFraction
+
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.CenterEnd) {
+            Box(modifier = Modifier.fillMaxHeight().size(width = 3.dp, height = maxHeight).background(DarkBorder))
+            Box(
+                modifier = Modifier.offset(y = thumbTop).size(width = 7.dp, height = thumbHeight)
+                    .background(CyanAccent, RectangleShape).border(1.dp, Color.White.copy(alpha = 0.6f), RectangleShape)
+            )
         }
     }
 }
@@ -250,10 +297,7 @@ private fun GalleryPhotoTile(
     onSelectPhoto: (GalleryMediaItem) -> Unit
 ) {
     Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .size(112.dp)
-            .background(DarkSurface)
+        modifier = Modifier.fillMaxWidth().size(112.dp).background(DarkSurface)
             .border(
                 width = if (isSelected) 2.dp else 1.dp,
                 color = if (isSelected) CyanAccent else DarkBorder,
@@ -262,10 +306,7 @@ private fun GalleryPhotoTile(
             .clickable { onSelectPhoto(photo) }
     ) {
         AsyncImage(
-            model = ImageRequest.Builder(LocalContext.current)
-                .data(photo.uri)
-                .crossfade(false)
-                .build(),
+            model = ImageRequest.Builder(LocalContext.current).data(photo.uri).crossfade(false).build(),
             contentDescription = photo.name,
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize()
@@ -276,10 +317,8 @@ private fun GalleryPhotoTile(
                 color = EmeraldAccent,
                 fontSize = 7.sp,
                 fontFamily = PressStart2PFontFamily,
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .background(Color.Black.copy(alpha = 0.8f))
-                    .padding(horizontal = 3.dp, vertical = 2.dp)
+                modifier = Modifier.align(Alignment.BottomStart)
+                    .background(Color.Black.copy(alpha = 0.8f)).padding(horizontal = 3.dp, vertical = 2.dp)
             )
         }
     }
