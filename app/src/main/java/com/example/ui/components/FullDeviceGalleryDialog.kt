@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -151,7 +152,7 @@ fun FullDeviceGalleryDialog(
                     Text("GALERÍA COMPLETA", color = Color.White, fontSize = 10.sp, fontFamily = PressStart2PFontFamily, fontWeight = FontWeight.Bold)
                     Text("${photos.size} IMÁGENES DISPONIBLES", color = EmeraldAccent, fontSize = 8.sp, fontFamily = SilkscreenFontFamily)
                 }
-                Text("CERRAR", color = Color.White, fontSize = 8.sp, fontFamily = SilkscreenFontFamily, modifier = Modifier.clickable { onClose() }.padding(start = 8.dp, vertical = 6.dp))
+                Text("CERRAR", color = Color.White, fontSize = 8.sp, fontFamily = SilkscreenFontFamily, modifier = Modifier.clickable { onClose() }.padding(start = 8.dp, top = 6.dp, bottom = 6.dp))
             }
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Box {
