@@ -143,6 +143,9 @@ fun PixelPuroApp(
     var showCalibrationDialog by remember { mutableStateOf(false) }
     var showScreenAnalyzerDialog by remember { mutableStateOf(false) }
     var screenAnalyzerReferenceBuffer by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var screenAnalyzerNormalizedRect by remember {
+        mutableStateOf(com.example.model.NormalizedRect(left = 0.12f, top = 0.15f, right = 0.88f, bottom = 0.85f))
+    }
     var returnToScreenAnalyzerAfterCapture by remember { mutableStateOf(false) }
     var calibrationColorTarget by remember { mutableStateOf<PixelColor?>(null) }
 
@@ -815,13 +818,18 @@ fun PixelPuroApp(
         ScreenVsBufferAnalyzerDialog(
             cameraPhoto = currentBitmap,
             referenceBuffer = refBuffer,
+            initialNormalizedRect = screenAnalyzerNormalizedRect,
             onSaveReconstructed = { reconstructed ->
                 viewModel.saveEditedBitmapToGallery(context, reconstructed)
             },
             onLoadToCanvas = { reconstructed ->
                 viewModel.updateBitmap(reconstructed)
             },
-            onOpenCameraForImagen2 = {
+            onOpenCameraForImagen2 = { selectedReference, selectedRect ->
+                // Guardar las elecciones del diálogo (incluida Imagen 1 cargada desde galería)
+                // antes de cerrarlo para abrir la cámara.
+                screenAnalyzerReferenceBuffer = selectedReference
+                screenAnalyzerNormalizedRect = selectedRect
                 returnToScreenAnalyzerAfterCapture = true
                 showScreenAnalyzerDialog = false
                 showCameraScreen = true
@@ -829,6 +837,9 @@ fun PixelPuroApp(
             onDismiss = {
                 showScreenAnalyzerDialog = false
                 screenAnalyzerReferenceBuffer = null
+                screenAnalyzerNormalizedRect = com.example.model.NormalizedRect(
+                    left = 0.12f, top = 0.15f, right = 0.88f, bottom = 0.85f
+                )
                 returnToScreenAnalyzerAfterCapture = false
             }
         )
