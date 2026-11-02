@@ -689,7 +689,7 @@ fun PixelPuroApp(
                         viewModel.selectDevicePhoto(context, photo)
                     },
                     onRequestPermission = {
-                        requestMediaPermissionLauncher.launch(mediaPermission)
+                        requestMediaPermissionLauncher.launch(mediaPermissions)
                     },
                     onRefresh = {
                         viewModel.scanDevicePhotos(context, autoSelectLatest = false)
@@ -717,10 +717,7 @@ fun PixelPuroApp(
     if (showFullDeviceGallery) {
         Dialog(
             onDismissRequest = { showFullDeviceGallery = false },
-            properties = DialogProperties(
-                usePlatformDefaultWidth = false,
-                decorFitsSystemWindows = false
-            )
+            properties = DialogProperties(usePlatformDefaultWidth = false)
         ) {
             FullDeviceGalleryDialog(
                 photos = devicePhotos,
