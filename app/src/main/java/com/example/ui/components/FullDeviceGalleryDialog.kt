@@ -137,7 +137,7 @@ fun FullDeviceGalleryDialog(
     Column(
         modifier = Modifier.fillMaxSize()
             .background(DarkBackground)
-            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+            .windowInsetsPadding(WindowInsets.safeDrawing)
             .padding(8.dp)
     ) {
         Column(
@@ -186,7 +186,7 @@ fun FullDeviceGalleryDialog(
         }
 
         if (photos.isEmpty()) {
-            Box(modifier = Modifier.weight(1f).fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars), contentAlignment = Alignment.Center) {
+            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Text(
                     text = "NO HAY IMÁGENES VISIBLES CON EL PERMISO ACTUAL",
                     color = TextMuted,
@@ -195,7 +195,7 @@ fun FullDeviceGalleryDialog(
                 )
             }
         } else {
-            Box(modifier = Modifier.weight(1f).fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars)) {
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(photoColumnCount),
                     state = gridState,
