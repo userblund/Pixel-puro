@@ -4,9 +4,12 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageFormat
 import android.graphics.Matrix
-import android.os.Build
+import android.os.Environment
 import android.view.HapticFeedbackConstants
+import android.view.Surface
 import android.view.ViewGroup
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -16,6 +19,7 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.ExperimentalImageCaptureOutputFormat
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -96,6 +100,7 @@ import com.example.ui.theme.TextSecondary
 import com.example.util.PixelEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
 import kotlin.math.log2
@@ -103,7 +108,7 @@ import kotlin.math.log2
 import com.example.util.CameraCalibrationManager
 import com.example.util.CameraCalibrationProfile
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalImageCaptureOutputFormat::class)
 @Composable
 fun PixelCameraScreen(
     onPhotoCaptured: (Bitmap) -> Unit,
@@ -142,12 +147,12 @@ fun PixelCameraScreen(
     var flashState by remember { mutableIntStateOf(0) }
     var isCapturing by remember { mutableStateOf(false) }
 
-    // Live Real-Time Optical Telemetry for PNG Maximum Quality (2^32 RGBA colors)
+    // Live Real-Time Optical Telemetry for PNG Maximum Quality (RGBA_8888 (análisis) colors)
     var shadowClippingPercent by remember { mutableFloatStateOf(0f) }
     var highlightClippingPercent by remember { mutableFloatStateOf(0f) }
     var dynamicRangeEv by remember { mutableFloatStateOf(10.5f) }
     var certaintyScore by remember { mutableIntStateOf(95) }
-    var opticalAdvice by remember { mutableStateOf("Sensor calibrado para PNG 32-bit RGBA") }
+    var opticalAdvice by remember { mutableStateOf("Análisis RGBA_8888; RAW si está disponible") }
     var showPrinciplesSheet by remember { mutableStateOf(false) }
     var isScreenBoxGuideActive by remember { mutableStateOf(false) }
 
@@ -155,6 +160,7 @@ fun PixelCameraScreen(
     var cameraProviderInstance by remember { mutableStateOf<ProcessCameraProvider?>(null) }
     var activeCamera by remember { mutableStateOf<Camera?>(null) }
     var imageCaptureInstance by remember { mutableStateOf<ImageCapture?>(null) }
+    var rawCaptureSupported by remember { mutableStateOf(false) }
 
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
 
@@ -199,10 +205,24 @@ fun PixelCameraScreen(
                 else -> ImageCapture.FLASH_MODE_OFF
             }
 
-            val capture = ImageCapture.Builder()
+            // ImageCapture no admite RGBA_8888. Si el dispositivo lo permite,
+            // conservar también el RAW_SENSOR original junto con el JPEG de visualización.
+            val supportedCaptureFormats = try {
+                ImageCapture.getImageCaptureCapabilities(provider.getCameraInfo(selector)).supportedOutputFormats
+            } catch (_: Exception) {
+                emptySet<Int>()
+            }
+            val supportsRawJpeg = supportedCaptureFormats.contains(ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
+            val captureBuilder = ImageCapture.Builder()
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+                .setJpegQuality(100)
                 .setFlashMode(capFlashMode)
-                .build()
+            captureBuilder.setOutputFormat(
+                if (supportsRawJpeg) ImageCapture.OUTPUT_FORMAT_RAW_JPEG
+                else ImageCapture.OUTPUT_FORMAT_JPEG
+            )
+            val capture = captureBuilder.build()
+            rawCaptureSupported = supportsRawJpeg
 
             // Live Image Analysis to monitor 32-bit RGBA optical certainty in real-time
             val imageAnalysis = ImageAnalysis.Builder()
@@ -255,9 +275,9 @@ fun PixelCameraScreen(
                         val certainty = (100 - (shadowPct * 0.8f + lightPct * 1.2f).toInt()).coerceIn(20, 100)
 
                         val advice = when {
-                            lightPct > 12f -> "⚠ LUCES ALTAS QUEMADAS: Reubica el encuadre para conservar los 2^32 colores."
+                            lightPct > 12f -> "⚠ LUCES ALTAS QUEMADAS: Reubica el encuadre para conservar los información de color."
                             shadowPct > 22f -> "⚠ PENUMBRA: Activa FLASH / ANTORCHA para dar la información lumínica necesaria."
-                            certainty >= 85 -> "✔ VISTA ÓPTIMA: Información lumínica equilibrada para PNG 32-bit máxima calidad."
+                            certainty >= 85 -> "✔ VISTA ÓPTIMA: Información lumínica equilibrada para PNG derivado de la captura."
                             else -> "ℹ Sensor estabilizando rango dinámico en tiempo real..."
                         }
 
@@ -333,7 +353,7 @@ fun PixelCameraScreen(
                     )
                     Spacer(modifier = Modifier.height(10.dp))
                     Text(
-                        text = "PixelPuro necesita acceso a la cámara para capturar fotos en PNG máxima calidad (32-bit RGBA sin pérdidas).",
+                        text = "PixelPuro necesita acceso a la cámara para capturar fotos en PNG procesado; RAW se conserva cuando está disponible.",
                         color = TextSecondary,
                         fontSize = 9.sp,
                         fontFamily = SilkscreenFontFamily,
@@ -394,7 +414,8 @@ fun PixelCameraScreen(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
-                    scaleType = PreviewView.ScaleType.FILL_CENTER
+                    // Mostrar el encuadre completo, sin recorte de relleno.
+                    scaleType = PreviewView.ScaleType.FIT_CENTER
                     implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                 }
 
@@ -525,7 +546,7 @@ fun PixelCameraScreen(
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    text = "PNG MÁXIMA CALIDAD",
+                                    text = "CAPTURA DE ALTA CALIDAD",
                                     color = Color.White,
                                     fontSize = 9.sp,
                                     fontFamily = PressStart2PFontFamily,
@@ -537,11 +558,11 @@ fun PixelCameraScreen(
                                         .background(EmeraldAccent, RectangleShape)
                                         .padding(horizontal = 3.dp, vertical = 1.dp)
                                 ) {
-                                    Text("2^32 RGBA", color = Color.Black, fontSize = 6.sp, fontFamily = PressStart2PFontFamily)
+                                    Text("RGBA_8888 (análisis)", color = Color.Black, fontSize = 6.sp, fontFamily = PressStart2PFontFamily)
                                 }
                             }
                             Text(
-                                text = "SIN COMPRESIÓN JPG | CERTEZA ÓPTICA: $certaintyScore%",
+                                text = "ANÁLISIS RGBA_8888 | RAW: ${rawCaptureSupported ? "DISPONIBLE" : "NO DISPONIBLE"}",
                                 color = EmeraldAccent,
                                 fontSize = 7.sp,
                                 fontFamily = SilkscreenFontFamily
@@ -666,7 +687,7 @@ fun PixelCameraScreen(
                                     opticalAdvice = "Guía activa: Encuadra la pantalla PC dentro del recuadro rojo para cotejo contra buffer 32-bit"
                                     Toast.makeText(context, "Modo Guía Pantalla PC: Activo", Toast.LENGTH_SHORT).show()
                                 } else {
-                                    opticalAdvice = "Sensor calibrado para PNG 32-bit RGBA"
+                                    opticalAdvice = "Análisis RGBA_8888; RAW si está disponible"
                                 }
                             }
                             .padding(vertical = 5.dp),
@@ -747,7 +768,7 @@ fun PixelCameraScreen(
                         }
                     }
 
-                    // Button: Big Arcade Shutter (DISPARAR PNG MÁXIMA CALIDAD)
+                    // Button: Big Arcade Shutter (DISPARAR CAPTURA DE ALTA CALIDAD)
                     PixelButton(
                         onClick = {
                             val capture = imageCaptureInstance
@@ -755,59 +776,130 @@ fun PixelCameraScreen(
                             isCapturing = true
                             view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
 
-                            capture.takePicture(
-                                cameraExecutor,
-                                object : ImageCapture.OnImageCapturedCallback() {
-                                    override fun onCaptureSuccess(imageProxy: ImageProxy) {
-                                        try {
-                                            val rawBitmap = imageProxy.toBitmap()
-                                            val rotation = imageProxy.imageInfo.rotationDegrees
-                                            var rotatedBitmap = if (rotation != 0) {
-                                                val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
-                                                Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
-                                            } else {
-                                                rawBitmap
-                                            }
+                            if (rawCaptureSupported) {
+                                // Se conserva RAW_SENSOR en DNG. El JPEG simultáneo alimenta
+                                // el Bitmap PNG del editor; no sustituye al archivo RAW.
+                                val stamp = System.currentTimeMillis()
+                                val rawDirectory = File(
+                                    context.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: context.filesDir,
+                                    "PixelPuro/RAW"
+                                ).apply { mkdirs() }
+                                val rawFile = File(rawDirectory, "PixelPuro_${stamp}.dng")
+                                val jpegFile = File(context.cacheDir, "PixelPuro_${stamp}.jpg")
+                                val rawOptions = ImageCapture.OutputFileOptions.Builder(rawFile).build()
+                                val jpegOptions = ImageCapture.OutputFileOptions.Builder(jpegFile).build()
+                                val targetRotation = previewViewInstance?.display?.rotation ?: Surface.ROTATION_0
+                                capture.targetRotation = targetRotation
+                                val rotation = activeCamera?.cameraInfo?.getSensorRotationDegrees(targetRotation) ?: 0
 
-                                            // Apply saved calibration profile if enabled
-                                            val profile = savedCalibrationProfile
-                                            if (useSavedCalibration && profile != null) {
-                                                rotatedBitmap = CameraCalibrationManager.applyProfileToPhoto(rotatedBitmap, profile)
-                                            }
-
-                                            // Save directly as PNG maximum quality in Pictures/PixelPuro
-                                            val finalBmp = rotatedBitmap
-                                            scope.launch(Dispatchers.IO) {
-                                                val uri = PixelEngine.saveBitmapToGallery(context, finalBmp, if (useSavedCalibration) "CALIBRATED_PNG" else "SNAP_PNG")
+                                capture.takePicture(
+                                    rawOptions,
+                                    jpegOptions,
+                                    cameraExecutor,
+                                    object : ImageCapture.OnImageSavedCallback {
+                                        override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                                            // RAW+JPEG invoca el callback dos veces: procesar solo JPEG.
+                                            if (outputFileResults.imageFormat != ImageFormat.JPEG) return
+                                            try {
+                                                val decodedBitmap = BitmapFactory.decodeFile(jpegFile.absolutePath)
+                                                    ?: throw IllegalStateException("No se pudo decodificar el JPEG")
+                                                var rotatedBitmap = if (rotation != 0) {
+                                                    val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
+                                                    Bitmap.createBitmap(decodedBitmap, 0, 0, decodedBitmap.width, decodedBitmap.height, matrix, true)
+                                                } else decodedBitmap
+                                                val profile = savedCalibrationProfile
+                                                if (useSavedCalibration && profile != null) {
+                                                    rotatedBitmap = CameraCalibrationManager.applyProfileToPhoto(rotatedBitmap, profile)
+                                                }
+                                                val finalBmp = rotatedBitmap
+                                                scope.launch(Dispatchers.IO) {
+                                                    val uri = PixelEngine.saveBitmapToGallery(
+                                                        context, finalBmp,
+                                                        if (useSavedCalibration) "CALIBRATED_PNG" else "SNAP_PNG"
+                                                    )
+                                                    jpegFile.delete()
+                                                    ContextCompat.getMainExecutor(context).execute {
+                                                        isCapturing = false
+                                                        val status = if (uri != null) "PNG guardado." else "PNG disponible en memoria."
+                                                        Toast.makeText(
+                                                            context,
+                                                            "$status RAW DNG conservado: ${rawFile.absolutePath}",
+                                                            Toast.LENGTH_LONG
+                                                        ).show()
+                                                        onPhotoCaptured(finalBmp)
+                                                    }
+                                                }
+                                            } catch (e: Exception) {
+                                                jpegFile.delete()
                                                 ContextCompat.getMainExecutor(context).execute {
                                                     isCapturing = false
-                                                    if (uri != null) {
-                                                        val calNotice = if (useSavedCalibration) " (con Perfil de Calibración guardado)" else ""
-                                                        Toast.makeText(context, "Foto guardada en PNG Máxima Calidad$calNotice", Toast.LENGTH_SHORT).show()
-                                                    } else {
-                                                        Toast.makeText(context, "PNG cargado en memoria", Toast.LENGTH_SHORT).show()
-                                                    }
-                                                    onPhotoCaptured(finalBmp)
+                                                    Toast.makeText(context, "Error procesando RAW+JPEG: ${e.message}", Toast.LENGTH_LONG).show()
                                                 }
                                             }
-                                        } catch (e: Exception) {
+                                        }
+
+                                        override fun onError(exception: ImageCaptureException) {
+                                            jpegFile.delete()
                                             ContextCompat.getMainExecutor(context).execute {
                                                 isCapturing = false
-                                                Toast.makeText(context, "Error procesando PNG: ${e.message}", Toast.LENGTH_SHORT).show()
+                                                Toast.makeText(context, "Error en captura RAW+JPEG: ${exception.message}", Toast.LENGTH_LONG).show()
                                             }
-                                        } finally {
-                                            imageProxy.close()
                                         }
                                     }
+                                )
+                            } else {
+                                // Fallback explícito: el dispositivo no declara soporte RAW+JPEG.
+                                capture.takePicture(
+                                    cameraExecutor,
+                                    object : ImageCapture.OnImageCapturedCallback() {
+                                        override fun onCaptureSuccess(imageProxy: ImageProxy) {
+                                            try {
+                                                val decoded = imageProxy.toBitmap()
+                                                val rotation = imageProxy.imageInfo.rotationDegrees
+                                                var rotatedBitmap = if (rotation != 0) {
+                                                    val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
+                                                    Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
+                                                } else decoded
+                                                val profile = savedCalibrationProfile
+                                                if (useSavedCalibration && profile != null) {
+                                                    rotatedBitmap = CameraCalibrationManager.applyProfileToPhoto(rotatedBitmap, profile)
+                                                }
+                                                val finalBmp = rotatedBitmap
+                                                scope.launch(Dispatchers.IO) {
+                                                    val uri = PixelEngine.saveBitmapToGallery(
+                                                        context, finalBmp,
+                                                        if (useSavedCalibration) "CALIBRATED_PNG" else "SNAP_PNG"
+                                                    )
+                                                    ContextCompat.getMainExecutor(context).execute {
+                                                        isCapturing = false
+                                                        val status = if (uri != null) "PNG guardado." else "PNG disponible en memoria."
+                                                        Toast.makeText(
+                                                            context,
+                                                            "$status Captura JPEG: RAW+JPEG no disponible.",
+                                                            Toast.LENGTH_LONG
+                                                        ).show()
+                                                        onPhotoCaptured(finalBmp)
+                                                    }
+                                                }
+                                            } catch (e: Exception) {
+                                                ContextCompat.getMainExecutor(context).execute {
+                                                    isCapturing = false
+                                                    Toast.makeText(context, "Error procesando JPEG: ${e.message}", Toast.LENGTH_SHORT).show()
+                                                }
+                                            } finally {
+                                                imageProxy.close()
+                                            }
+                                        }
 
-                                    override fun onError(exception: ImageCaptureException) {
-                                        ContextCompat.getMainExecutor(context).execute {
-                                            isCapturing = false
-                                            Toast.makeText(context, "Error cámara: ${exception.message}", Toast.LENGTH_SHORT).show()
+                                        override fun onError(exception: ImageCaptureException) {
+                                            ContextCompat.getMainExecutor(context).execute {
+                                                isCapturing = false
+                                                Toast.makeText(context, "Error cámara: ${exception.message}", Toast.LENGTH_SHORT).show()
+                                            }
                                         }
                                     }
-                                }
-                            )
+                                )
+                            }
                         },
                         backgroundColor = if (isCapturing) Color.Gray else EmeraldAccent,
                         textColor = Color.Black,
@@ -825,7 +917,7 @@ fun PixelCameraScreen(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "PNG 32-BIT RGBA",
+                                text = "PNG + RAW DNG si está disponible",
                                 color = Color(0xFF1B5E20),
                                 fontSize = 7.sp,
                                 fontFamily = SilkscreenFontFamily,
