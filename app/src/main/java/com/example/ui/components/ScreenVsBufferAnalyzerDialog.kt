@@ -153,9 +153,19 @@ fun ScreenVsBufferAnalyzerDialog(
     }
 
     LaunchedEffect(normalizedRect, currentCameraPhoto, currentReferenceBuffer) {
-        report = PixelEngine.analyzeScreenVsBuffer(currentCameraPhoto, normalizedRect, currentReferenceBuffer)
+        val updatedReport = PixelEngine.analyzeScreenVsBuffer(
+            currentCameraPhoto,
+            normalizedRect,
+            currentReferenceBuffer
+        )
+        report = updatedReport
         simulatedBuffer = null
-        image3Verification = PixelEngine.generateCalibrationVerificationImage(currentCameraPhoto, normalizedRect, currentReferenceBuffer, report)
+        image3Verification = PixelEngine.generateCalibrationVerificationImage(
+            currentCameraPhoto,
+            normalizedRect,
+            currentReferenceBuffer,
+            updatedReport
+        )
     }
 
     Dialog(
