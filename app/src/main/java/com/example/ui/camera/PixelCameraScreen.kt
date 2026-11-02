@@ -4,11 +4,8 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
-import android.graphics.Matrix
 import android.graphics.PixelFormat
-import android.media.ExifInterface
 import android.os.Environment
 import android.os.SystemClock
 import android.view.HapticFeedbackConstants
@@ -116,35 +113,6 @@ import kotlin.math.log2
 import com.example.util.CameraCalibrationManager
 import com.example.util.CameraCalibrationProfile
 
-private fun decodeBitmapRespectingExif(file: File): Bitmap? {
-    val decoded = BitmapFactory.decodeFile(file.absolutePath) ?: return null
-    val orientation = runCatching {
-        ExifInterface(file.absolutePath).getAttributeInt(
-            ExifInterface.TAG_ORIENTATION,
-            ExifInterface.ORIENTATION_NORMAL
-        )
-    }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
-
-    val transform = Matrix()
-    when (orientation) {
-        ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> transform.setScale(-1f, 1f)
-        ExifInterface.ORIENTATION_ROTATE_180 -> transform.setRotate(180f)
-        ExifInterface.ORIENTATION_FLIP_VERTICAL -> transform.setScale(1f, -1f)
-        ExifInterface.ORIENTATION_TRANSPOSE -> {
-            transform.setRotate(90f)
-            transform.postScale(-1f, 1f)
-        }
-        ExifInterface.ORIENTATION_ROTATE_90 -> transform.setRotate(90f)
-        ExifInterface.ORIENTATION_TRANSVERSE -> {
-            transform.setRotate(-90f)
-            transform.postScale(-1f, 1f)
-        }
-        ExifInterface.ORIENTATION_ROTATE_270 -> transform.setRotate(-90f)
-        else -> return decoded
-    }
-    return Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, transform, false)
-}
-
 private data class CameraRgbaFrame(
     val width: Int,
     val height: Int,
@@ -250,10 +218,6 @@ fun PixelCameraScreen(
     var savedCalibrationProfile by remember {
         mutableStateOf(CameraCalibrationManager.loadProfile(context))
     }
-    var useSavedCalibration by remember {
-        mutableStateOf(savedCalibrationProfile != null)
-    }
-
     var hasCameraPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
@@ -910,25 +874,19 @@ fun PixelCameraScreen(
                         Box(
                             modifier = Modifier
                                 .weight(1f)
-                                .background(if (useSavedCalibration) EmeraldAccent else DarkBackground, RectangleShape)
-                                .border(1.dp, if (useSavedCalibration) Color.White else EmeraldAccent, RectangleShape)
-                                .clickable {
-                                    useSavedCalibration = !useSavedCalibration
-                                    val status = if (useSavedCalibration) "ACTIVADA (Matriz 3x3 + De-Gamma)" else "DESACTIVADA"
-                                    Toast.makeText(context, "Calibración guardada: $status", Toast.LENGTH_SHORT).show()
-                                }
+                                .background(DarkBackground, RectangleShape)
+                                .border(1.dp, EmeraldAccent, RectangleShape)
                                 .padding(vertical = 5.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = if (useSavedCalibration) "★ CALIBRACIÓN ACTIVADA" else "APLICAR CALIBRACIÓN",
-                                color = if (useSavedCalibration) Color.Black else EmeraldAccent,
+                                text = "PERFIL DISPONIBLE · ORIGINAL INTACTO",
+                                color = EmeraldAccent,
                                 fontSize = 6.5.sp,
                                 fontFamily = PressStart2PFontFamily,
                                 fontWeight = FontWeight.Bold
                             )
                         }
-                    }
                 }
 
                 // Controls Row: [ GIRAR ] - [ DISPARAR PNG ] - [ FLASH ]
