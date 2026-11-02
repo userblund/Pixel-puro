@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -134,7 +136,7 @@ fun FullDeviceGalleryDialog(
     Column(
         modifier = Modifier.fillMaxSize()
             .background(DarkBackground)
-            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
             .padding(8.dp)
     ) {
         Column(
@@ -183,7 +185,7 @@ fun FullDeviceGalleryDialog(
         }
 
         if (photos.isEmpty()) {
-            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Box(modifier = Modifier.weight(1f).fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars), contentAlignment = Alignment.Center) {
                 Text(
                     text = "NO HAY IMÁGENES VISIBLES CON EL PERMISO ACTUAL",
                     color = TextMuted,
@@ -192,7 +194,7 @@ fun FullDeviceGalleryDialog(
                 )
             }
         } else {
-            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            Box(modifier = Modifier.weight(1f).fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars)) {
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(photoColumnCount),
                     state = gridState,
