@@ -316,7 +316,8 @@ fun ScreenVsBufferAnalyzerDialog(
                 Spacer(modifier = Modifier.height(4.dp))
 
 
-                // Interactive Photo Viewer with Red Bounding Box ("Recuadro Rojo")
+                // Previsualización simultánea: Imagen 1 completa y sin recuadro;
+                // Imagen 2 con recuadro rojo ajustable.
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -325,143 +326,123 @@ fun ScreenVsBufferAnalyzerDialog(
                         .background(Color.Black, RectangleShape)
                         .border(1.dp, DarkBorder, RectangleShape)
                 ) {
-                    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                        val containerWidth = maxWidth.value
-                        val containerHeight = maxHeight.value
-
-                        // Render camera photo (Imagen 2)
-                        Canvas(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .pointerInput(Unit) {
-                                    detectDragGestures { change, dragAmount ->
-                                        change.consume()
-                                        val deltaX = dragAmount.x / size.width
-                                        val deltaY = dragAmount.y / size.height
-
-                                        val newLeft = (normalizedRect.left + deltaX).coerceIn(0.01f, normalizedRect.right - 0.1f)
-                                        val newRight = (normalizedRect.right + deltaX).coerceIn(newLeft + 0.1f, 0.99f)
-                                        val newTop = (normalizedRect.top + deltaY).coerceIn(0.01f, normalizedRect.bottom - 0.1f)
-                                        val newBottom = (normalizedRect.bottom + deltaY).coerceIn(newTop + 0.1f, 0.99f)
-
-                                        normalizedRect = NormalizedRect(newLeft, newTop, newRight, newBottom)
-                                    }
-                                }
-                        ) {
-                            val imgBmp = currentCameraPhoto.asImageBitmap()
-                            drawImage(
-                                image = imgBmp,
-                                dstSize = androidx.compose.ui.unit.IntSize(size.width.toInt(), size.height.toInt())
-                            )
-
-                            val boxLeft = normalizedRect.left * size.width
-                            val boxTop = normalizedRect.top * size.height
-                            val boxWidth = normalizedRect.width * size.width
-                            val boxHeight = normalizedRect.height * size.height
-
-                            // Draw shaded dim background outside the red box
-                            drawRect(
-                                color = Color.Black.copy(alpha = 0.5f),
-                                topLeft = Offset.Zero,
-                                size = Size(size.width, boxTop)
-                            )
-                            drawRect(
-                                color = Color.Black.copy(alpha = 0.5f),
-                                topLeft = Offset(0f, boxTop + boxHeight),
-                                size = Size(size.width, size.height - (boxTop + boxHeight))
-                            )
-                            drawRect(
-                                color = Color.Black.copy(alpha = 0.5f),
-                                topLeft = Offset(0f, boxTop),
-                                size = Size(boxLeft, boxHeight)
-                            )
-                            drawRect(
-                                color = Color.Black.copy(alpha = 0.5f),
-                                topLeft = Offset(boxLeft + boxWidth, boxTop),
-                                size = Size(size.width - (boxLeft + boxWidth), boxHeight)
-                            )
-
-                            // Draw RED BOUNDING BOX
-                            drawRect(
-                                color = Color(0xFFFF1744),
-                                topLeft = Offset(boxLeft, boxTop),
-                                size = Size(boxWidth, boxHeight),
-                                style = Stroke(width = 3.dp.toPx())
-                            )
-
-                            // Corner brackets for surgical calibration
-                            val cornerLen = 16.dp.toPx()
-                            val strokeW = 4.dp.toPx()
-                            // Top-Left
-                            drawLine(Color.White, Offset(boxLeft, boxTop), Offset(boxLeft + cornerLen, boxTop), strokeWidth = strokeW)
-                            drawLine(Color.White, Offset(boxLeft, boxTop), Offset(boxLeft, boxTop + cornerLen), strokeWidth = strokeW)
-                            // Top-Right
-                            drawLine(Color.White, Offset(boxLeft + boxWidth, boxTop), Offset(boxLeft + boxWidth - cornerLen, boxTop), strokeWidth = strokeW)
-                            drawLine(Color.White, Offset(boxLeft + boxWidth, boxTop), Offset(boxLeft + boxWidth, boxTop + cornerLen), strokeWidth = strokeW)
-                            // Bottom-Left
-                            drawLine(Color.White, Offset(boxLeft, boxTop + boxHeight), Offset(boxLeft + cornerLen, boxTop + boxHeight), strokeWidth = strokeW)
-                            drawLine(Color.White, Offset(boxLeft, boxTop + boxHeight), Offset(boxLeft, boxTop + boxHeight - cornerLen), strokeWidth = strokeW)
-                            // Bottom-Right
-                            drawLine(Color.White, Offset(boxLeft + boxWidth, boxTop + boxHeight), Offset(boxLeft + boxWidth - cornerLen, boxTop + boxHeight), strokeWidth = strokeW)
-                            drawLine(Color.White, Offset(boxLeft + boxWidth, boxTop + boxHeight), Offset(boxLeft + boxWidth, boxTop + boxHeight - cornerLen), strokeWidth = strokeW)
-                        }
-
-                        // Floating Overlay Badge inside/on top of the Red Box
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
                         Box(
-                            modifier = Modifier
-                                .align(Alignment.TopCenter)
-                                .padding(top = 8.dp)
-                                .background(Color.Black.copy(alpha = 0.85f), RectangleShape)
-                                .border(1.dp, Color(0xFFFF1744), RectangleShape)
-                                .padding(horizontal = 8.dp, vertical = 3.dp)
+                            modifier = Modifier.weight(1f).fillMaxSize()
+                                .background(Color(0xFF080D14), RectangleShape)
+                                .testTag("imagen1_preview")
                         ) {
+                            Canvas(modifier = Modifier.fillMaxSize()) {
+                                val bitmap = currentReferenceBuffer.asImageBitmap()
+                                val scale = minOf(size.width / bitmap.width.toFloat(), size.height / bitmap.height.toFloat())
+                                val drawWidth = (bitmap.width * scale).toInt().coerceAtLeast(1)
+                                val drawHeight = (bitmap.height * scale).toInt().coerceAtLeast(1)
+                                val left = ((size.width - drawWidth) / 2f).toInt()
+                                val top = ((size.height - drawHeight) / 2f).toInt()
+                                drawImage(
+                                    image = bitmap,
+                                    dstOffset = androidx.compose.ui.unit.IntOffset(left, top),
+                                    dstSize = androidx.compose.ui.unit.IntSize(drawWidth, drawHeight)
+                                )
+                            }
+                            Box(
+                                modifier = Modifier.align(Alignment.TopCenter)
+                                    .background(Color.Black.copy(alpha = 0.88f), RectangleShape)
+                                    .border(1.dp, CyanAccent, RectangleShape)
+                                    .padding(horizontal = 4.dp, vertical = 3.dp)
+                            ) {
+                                Text("IMAGEN 1 · BUFFER PC", color = CyanAccent, fontSize = 6.sp, fontFamily = PressStart2PFontFamily)
+                            }
                             Text(
-                                text = String.format(Locale.US, "RECUADRO ROJO EN IMAGEN 2: %.1f%% FIDELIDAD", report.fidelityPercentage),
-                                color = Color(0xFFFF1744),
-                                fontSize = 8.sp,
-                                fontFamily = PressStart2PFontFamily,
-                                fontWeight = FontWeight.Bold
+                                text = "${currentReferenceBuffer.width} × ${currentReferenceBuffer.height} PX · SIN RECUADRO",
+                                modifier = Modifier.align(Alignment.BottomCenter)
+                                    .background(Color.Black.copy(alpha = 0.88f), RectangleShape)
+                                    .padding(horizontal = 3.dp, vertical = 2.dp),
+                                color = CyanAccent, fontSize = 5.sp, fontFamily = SilkscreenFontFamily
                             )
                         }
 
-                        // Drag hint badge & Imagen 1 Reference Notice
-                        Row(
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .padding(bottom = 6.dp),
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                        BoxWithConstraints(
+                            modifier = Modifier.weight(1f).fillMaxSize()
+                                .background(Color(0xFF080D14), RectangleShape)
+                                .testTag("imagen2_preview")
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .background(Color.Black.copy(alpha = 0.85f), RectangleShape)
-                                    .border(1.dp, CyanAccent, RectangleShape)
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            Canvas(
+                                modifier = Modifier.fillMaxSize()
+                                    .pointerInput(normalizedRect, currentCameraPhoto) {
+                                        detectDragGestures { change, dragAmount ->
+                                            change.consume()
+                                            val scale = minOf(
+                                                size.width / currentCameraPhoto.width.toFloat(),
+                                                size.height / currentCameraPhoto.height.toFloat()
+                                            )
+                                            val drawWidth = (currentCameraPhoto.width * scale).coerceAtLeast(1f)
+                                            val drawHeight = (currentCameraPhoto.height * scale).coerceAtLeast(1f)
+                                            val deltaX = dragAmount.x / drawWidth
+                                            val deltaY = dragAmount.y / drawHeight
+                                            val newLeft = (normalizedRect.left + deltaX).coerceIn(0.01f, normalizedRect.right - 0.1f)
+                                            val newRight = (normalizedRect.right + deltaX).coerceIn(newLeft + 0.1f, 0.99f)
+                                            val newTop = (normalizedRect.top + deltaY).coerceIn(0.01f, normalizedRect.bottom - 0.1f)
+                                            val newBottom = (normalizedRect.bottom + deltaY).coerceIn(newTop + 0.1f, 0.99f)
+                                            normalizedRect = NormalizedRect(newLeft, newTop, newRight, newBottom)
+                                        }
+                                    }
                             ) {
-                                Text(
-                                    text = "IMAGEN 1 (BUFFER): ORTOGONAL 100% SIN RECUADRO",
-                                    color = CyanAccent,
-                                    fontSize = 6.5.sp,
-                                    fontFamily = SilkscreenFontFamily,
-                                    fontWeight = FontWeight.Bold
+                                val bitmap = currentCameraPhoto.asImageBitmap()
+                                val scale = minOf(size.width / bitmap.width.toFloat(), size.height / bitmap.height.toFloat())
+                                val drawWidth = (bitmap.width * scale).toInt().coerceAtLeast(1)
+                                val drawHeight = (bitmap.height * scale).toInt().coerceAtLeast(1)
+                                val left = ((size.width - drawWidth) / 2f).toInt()
+                                val top = ((size.height - drawHeight) / 2f).toInt()
+                                drawImage(
+                                    image = bitmap,
+                                    dstOffset = androidx.compose.ui.unit.IntOffset(left, top),
+                                    dstSize = androidx.compose.ui.unit.IntSize(drawWidth, drawHeight)
                                 )
-                            }
-
-                            Box(
-                                modifier = Modifier
-                                    .background(Color.Black.copy(alpha = 0.85f), RectangleShape)
-                                    .border(1.dp, Color(0xFFFF1744), RectangleShape)
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                            ) {
-                                Text(
-                                    text = "IMAGEN 2: ARRASTRA RECUADRO ROJO",
+                                val boxLeft = left + normalizedRect.left * drawWidth
+                                val boxTop = top + normalizedRect.top * drawHeight
+                                val boxWidth = normalizedRect.width * drawWidth
+                                val boxHeight = normalizedRect.height * drawHeight
+                                drawRect(Color.Black.copy(alpha = 0.5f), Offset(left.toFloat(), top.toFloat()), Size(drawWidth.toFloat(), (boxTop - top).coerceAtLeast(0f)))
+                                drawRect(Color.Black.copy(alpha = 0.5f), Offset(left.toFloat(), boxTop + boxHeight), Size(drawWidth.toFloat(), (top + drawHeight - boxTop - boxHeight).coerceAtLeast(0f)))
+                                drawRect(Color.Black.copy(alpha = 0.5f), Offset(left.toFloat(), boxTop), Size((boxLeft - left).coerceAtLeast(0f), boxHeight))
+                                drawRect(Color.Black.copy(alpha = 0.5f), Offset(boxLeft + boxWidth, boxTop), Size((left + drawWidth - boxLeft - boxWidth).coerceAtLeast(0f), boxHeight))
+                                drawRect(
                                     color = Color(0xFFFF1744),
-                                    fontSize = 6.5.sp,
-                                    fontFamily = SilkscreenFontFamily
+                                    topLeft = Offset(boxLeft, boxTop),
+                                    size = Size(boxWidth, boxHeight),
+                                    style = Stroke(width = 2.dp.toPx())
                                 )
+                                val cornerLen = 10.dp.toPx()
+                                val strokeW = 3.dp.toPx()
+                                drawLine(Color.White, Offset(boxLeft, boxTop), Offset(boxLeft + cornerLen, boxTop), strokeWidth = strokeW)
+                                drawLine(Color.White, Offset(boxLeft, boxTop), Offset(boxLeft, boxTop + cornerLen), strokeWidth = strokeW)
+                                drawLine(Color.White, Offset(boxLeft + boxWidth, boxTop), Offset(boxLeft + boxWidth - cornerLen, boxTop), strokeWidth = strokeW)
+                                drawLine(Color.White, Offset(boxLeft + boxWidth, boxTop), Offset(boxLeft + boxWidth, boxTop + cornerLen), strokeWidth = strokeW)
+                                drawLine(Color.White, Offset(boxLeft, boxTop + boxHeight), Offset(boxLeft + cornerLen, boxTop + boxHeight), strokeWidth = strokeW)
+                                drawLine(Color.White, Offset(boxLeft, boxTop + boxHeight), Offset(boxLeft, boxTop + boxHeight - cornerLen), strokeWidth = strokeW)
+                                drawLine(Color.White, Offset(boxLeft + boxWidth, boxTop + boxHeight), Offset(boxLeft + boxWidth - cornerLen, boxTop + boxHeight), strokeWidth = strokeW)
+                                drawLine(Color.White, Offset(boxLeft + boxWidth, boxTop + boxHeight), Offset(boxLeft + boxWidth, boxTop + boxHeight - cornerLen), strokeWidth = strokeW)
                             }
+                            Box(
+                                modifier = Modifier.align(Alignment.TopCenter)
+                                    .background(Color.Black.copy(alpha = 0.88f), RectangleShape)
+                                    .border(1.dp, Color(0xFFFF1744), RectangleShape)
+                                    .padding(horizontal = 4.dp, vertical = 3.dp)
+                            ) {
+                                Text("IMAGEN 2 · FOTO", color = Color(0xFFFF1744), fontSize = 6.sp, fontFamily = PressStart2PFontFamily)
+                            }
+                            Text(
+                                text = "RECUADRO ROJO · ARRASTRA PARA AJUSTAR",
+                                modifier = Modifier.align(Alignment.BottomCenter)
+                                    .background(Color.Black.copy(alpha = 0.88f), RectangleShape)
+                                    .padding(horizontal = 3.dp, vertical = 2.dp),
+                                color = Color(0xFFFF1744), fontSize = 5.sp, fontFamily = SilkscreenFontFamily
+                            )
                         }
-
                     }
                 }
 
