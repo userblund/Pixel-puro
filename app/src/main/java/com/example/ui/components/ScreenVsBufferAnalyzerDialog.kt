@@ -89,9 +89,10 @@ import kotlinx.coroutines.launch
 fun ScreenVsBufferAnalyzerDialog(
     cameraPhoto: Bitmap,
     referenceBuffer: Bitmap,
+    initialNormalizedRect: NormalizedRect = NormalizedRect(left = 0.12f, top = 0.15f, right = 0.88f, bottom = 0.85f),
     onSaveReconstructed: (Bitmap) -> Unit,
     onLoadToCanvas: (Bitmap) -> Unit,
-    onOpenCameraForImagen2: () -> Unit = {},
+    onOpenCameraForImagen2: (Bitmap, NormalizedRect) -> Unit = { _, _ -> },
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -100,8 +101,8 @@ fun ScreenVsBufferAnalyzerDialog(
     var currentCameraPhoto by remember { mutableStateOf(cameraPhoto) }
     var currentReferenceBuffer by remember { mutableStateOf(referenceBuffer) }
 
-    var normalizedRect by remember {
-        mutableStateOf(NormalizedRect(left = 0.12f, top = 0.15f, right = 0.88f, bottom = 0.85f))
+    var normalizedRect by remember(initialNormalizedRect) {
+        mutableStateOf(initialNormalizedRect)
     }
 
     var report by remember {
@@ -306,7 +307,7 @@ fun ScreenVsBufferAnalyzerDialog(
                             .background(DarkSurface, RectangleShape)
                             .border(1.dp, EmeraldAccent, RectangleShape)
                             .clickable {
-                                onOpenCameraForImagen2()
+                                onOpenCameraForImagen2(currentReferenceBuffer, normalizedRect)
                             }
                             .padding(horizontal = 6.dp, vertical = 5.dp),
                         contentAlignment = Alignment.Center
