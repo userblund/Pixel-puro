@@ -10,6 +10,7 @@ import android.graphics.Matrix
 import android.os.Environment
 import android.view.HapticFeedbackConstants
 import android.view.Surface
+import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -22,6 +23,7 @@ import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ExperimentalImageCaptureOutputFormat
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import androidx.camera.core.UseCaseGroup
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.AnimatedVisibility
@@ -295,12 +297,21 @@ fun PixelCameraScreen(
                 }
             }
 
+            // Compartir ViewPort hace que Preview, ImageAnalysis e ImageCapture
+            // observen la misma región del sensor (mismo recorte geométrico).
+            val viewPort = previewView.viewPort
+                ?: throw IllegalStateException("La vista previa aún no tiene un ViewPort válido.")
+            val useCaseGroup = UseCaseGroup.Builder()
+                .setViewPort(viewPort)
+                .addUseCase(preview)
+                .addUseCase(imageAnalysis)
+                .addUseCase(capture)
+                .build()
+
             val camera = provider.bindToLifecycle(
                 lifecycleOwner,
                 selector,
-                preview,
-                capture,
-                imageAnalysis
+                useCaseGroup
             )
 
             activeCamera = camera
@@ -414,17 +425,43 @@ fun PixelCameraScreen(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
-                    // Mostrar el encuadre completo, sin recorte de relleno.
-                    scaleType = PreviewView.ScaleType.FIT_CENTER
+                    // FILL_CENTER se combina con el ViewPort compartido de CameraX:
+                    // lo visible en Preview coincide geométricamente con el recorte capturado.
+                    scaleType = PreviewView.ScaleType.FILL_CENTER
                     implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                 }
 
                 val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
+                val mainExecutor = ContextCompat.getMainExecutor(ctx)
+                val layoutListener = object : View.OnLayoutChangeListener {
+                    override fun onLayoutChange(
+                        changedView: View,
+                        left: Int,
+                        top: Int,
+                        right: Int,
+                        bottom: Int,
+                        oldLeft: Int,
+                        oldTop: Int,
+                        oldRight: Int,
+                        oldBottom: Int
+                    ) {
+                        val provider = runCatching { cameraProviderFuture.get() }.getOrNull() ?: return
+                        if (previewView.viewPort != null) {
+                            previewView.removeOnLayoutChangeListener(this)
+                            cameraProviderInstance = provider
+                            previewViewInstance = previewView
+                        }
+                    }
+                }
+                previewView.addOnLayoutChangeListener(layoutListener)
                 cameraProviderFuture.addListener({
                     val provider = cameraProviderFuture.get()
-                    cameraProviderInstance = provider
-                    previewViewInstance = previewView
-                }, ContextCompat.getMainExecutor(ctx))
+                    if (previewView.viewPort != null) {
+                        previewView.removeOnLayoutChangeListener(layoutListener)
+                        cameraProviderInstance = provider
+                        previewViewInstance = previewView
+                    }
+                }, mainExecutor)
 
                 previewView
             }
@@ -562,7 +599,7 @@ fun PixelCameraScreen(
                                 }
                             }
                             Text(
-                                text = "ANÁLISIS RGBA_8888 | RAW: ${rawCaptureSupported ? "DISPONIBLE" : "NO DISPONIBLE"}",
+                                text = "ANÁLISIS RGBA_8888 | RAW: ${if (rawCaptureSupported) "DISPONIBLE" else "NO DISPONIBLE"}",
                                 color = EmeraldAccent,
                                 fontSize = 7.sp,
                                 fontFamily = SilkscreenFontFamily
