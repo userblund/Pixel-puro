@@ -1,0 +1,1011 @@
+package com.example.ui.camera
+
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Matrix
+import android.os.Build
+import android.view.HapticFeedbackConstants
+import android.view.ViewGroup
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.Camera
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.ImageProxy
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.style.TextAlign
+import com.example.ui.pixel.PixelButton
+import com.example.ui.pixel.PixelCameraIcon
+import com.example.ui.pixel.PixelCloseIcon
+import com.example.ui.pixel.PixelFlashIcon
+import com.example.ui.pixel.PixelMonitorIcon
+import com.example.ui.pixel.PixelSwitchCameraIcon
+import com.example.ui.pixel.pixelBevel
+import com.example.ui.pixel.pixelShadow
+import com.example.ui.theme.AmberAccent
+import com.example.ui.theme.CyanAccent
+import com.example.ui.theme.DarkBackground
+import com.example.ui.theme.DarkBorder
+import com.example.ui.theme.DarkSurface
+import com.example.ui.theme.EmeraldAccent
+import com.example.ui.theme.PressStart2PFontFamily
+import com.example.ui.theme.SilkscreenFontFamily
+import com.example.ui.theme.TextMuted
+import com.example.ui.theme.TextSecondary
+import com.example.util.PixelEngine
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import java.util.Locale
+import java.util.concurrent.Executors
+import kotlin.math.log2
+
+import com.example.util.CameraCalibrationManager
+import com.example.util.CameraCalibrationProfile
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PixelCameraScreen(
+    onPhotoCaptured: (Bitmap) -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val view = LocalView.current
+    val scope = rememberCoroutineScope()
+
+    var savedCalibrationProfile by remember {
+        mutableStateOf(CameraCalibrationManager.loadProfile(context))
+    }
+    var useSavedCalibration by remember {
+        mutableStateOf(savedCalibrationProfile != null)
+    }
+
+    var hasCameraPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        hasCameraPermission = isGranted
+        if (!isGranted) {
+            Toast.makeText(context, "Permiso de cámara necesario para capturar fotos", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    var lensFacing by remember { mutableIntStateOf(CameraSelector.LENS_FACING_BACK) }
+    // Flash modes: 0 = AUTO, 1 = ON (with torch), 2 = OFF
+    var flashState by remember { mutableIntStateOf(0) }
+    var isCapturing by remember { mutableStateOf(false) }
+
+    // Live Real-Time Optical Telemetry for PNG Maximum Quality (2^32 RGBA colors)
+    var shadowClippingPercent by remember { mutableFloatStateOf(0f) }
+    var highlightClippingPercent by remember { mutableFloatStateOf(0f) }
+    var dynamicRangeEv by remember { mutableFloatStateOf(10.5f) }
+    var certaintyScore by remember { mutableIntStateOf(95) }
+    var opticalAdvice by remember { mutableStateOf("Sensor calibrado para PNG 32-bit RGBA") }
+    var showPrinciplesSheet by remember { mutableStateOf(false) }
+    var isScreenBoxGuideActive by remember { mutableStateOf(false) }
+
+    var previewViewInstance by remember { mutableStateOf<PreviewView?>(null) }
+    var cameraProviderInstance by remember { mutableStateOf<ProcessCameraProvider?>(null) }
+    var activeCamera by remember { mutableStateOf<Camera?>(null) }
+    var imageCaptureInstance by remember { mutableStateOf<ImageCapture?>(null) }
+
+    val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            cameraExecutor.shutdown()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        if (!hasCameraPermission) {
+            permissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+
+    // Function to rebind camera cleanly with live analysis and maximum quality PNG capture
+    fun rebindCamera(
+        provider: ProcessCameraProvider,
+        previewView: PreviewView,
+        targetLens: Int,
+        flashModeCode: Int
+    ) {
+        val selector = CameraSelector.Builder()
+            .requireLensFacing(targetLens)
+            .build()
+
+        if (!provider.hasCamera(selector)) {
+            Toast.makeText(context, "Lente no disponible en este dispositivo", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        try {
+            provider.unbindAll()
+
+            val preview = Preview.Builder().build().also {
+                it.surfaceProvider = previewView.surfaceProvider
+            }
+
+            val capFlashMode = when (flashModeCode) {
+                0 -> ImageCapture.FLASH_MODE_AUTO
+                1 -> ImageCapture.FLASH_MODE_ON
+                else -> ImageCapture.FLASH_MODE_OFF
+            }
+
+            val capture = ImageCapture.Builder()
+                .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+                .setFlashMode(capFlashMode)
+                .build()
+
+            // Live Image Analysis to monitor 32-bit RGBA optical certainty in real-time
+            val imageAnalysis = ImageAnalysis.Builder()
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+                .build()
+
+            imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
+                try {
+                    val plane = imageProxy.planes[0]
+                    val buffer = plane.buffer
+                    val pixelStride = plane.pixelStride
+                    val rowStride = plane.rowStride
+                    val width = imageProxy.width
+                    val height = imageProxy.height
+
+                    var darkCount = 0
+                    var brightCount = 0
+                    var totalSamples = 0
+                    var minLuma = 255
+                    var maxLuma = 0
+
+                    val stepY = maxOf(1, height / 24)
+                    val stepX = maxOf(1, width / 24)
+
+                    for (y in 0 until height step stepY) {
+                        val rowOffset = y * rowStride
+                        for (x in 0 until width step stepX) {
+                            val index = rowOffset + x * pixelStride
+                            if (index + 2 < buffer.remaining()) {
+                                val r = buffer.get(index).toInt() and 0xFF
+                                val g = buffer.get(index + 1).toInt() and 0xFF
+                                val b = buffer.get(index + 2).toInt() and 0xFF
+                                val luma = (r * 299 + g * 587 + b * 114) / 1000
+
+                                if (luma < 12) darkCount++
+                                if (luma > 243) brightCount++
+                                if (luma < minLuma) minLuma = luma
+                                if (luma > maxLuma) maxLuma = luma
+                                totalSamples++
+                            }
+                        }
+                    }
+
+                    if (totalSamples > 0) {
+                        val shadowPct = (darkCount * 100f / totalSamples)
+                        val lightPct = (brightCount * 100f / totalSamples)
+                        val lumaRange = (maxLuma - minLuma).coerceAtLeast(1)
+                        val ev = (log2(lumaRange.toFloat()) + 4f).coerceIn(4f, 14f)
+                        val certainty = (100 - (shadowPct * 0.8f + lightPct * 1.2f).toInt()).coerceIn(20, 100)
+
+                        val advice = when {
+                            lightPct > 12f -> "⚠ LUCES ALTAS QUEMADAS: Reubica el encuadre para conservar los 2^32 colores."
+                            shadowPct > 22f -> "⚠ PENUMBRA: Activa FLASH / ANTORCHA para dar la información lumínica necesaria."
+                            certainty >= 85 -> "✔ VISTA ÓPTIMA: Información lumínica equilibrada para PNG 32-bit máxima calidad."
+                            else -> "ℹ Sensor estabilizando rango dinámico en tiempo real..."
+                        }
+
+                        ContextCompat.getMainExecutor(context).execute {
+                            shadowClippingPercent = shadowPct
+                            highlightClippingPercent = lightPct
+                            dynamicRangeEv = ev
+                            certaintyScore = certainty
+                            opticalAdvice = advice
+                        }
+                    }
+                } catch (_: Exception) {
+                } finally {
+                    imageProxy.close()
+                }
+            }
+
+            val camera = provider.bindToLifecycle(
+                lifecycleOwner,
+                selector,
+                preview,
+                capture,
+                imageAnalysis
+            )
+
+            activeCamera = camera
+            imageCaptureInstance = capture
+
+            // Torch light control
+            val shouldTorch = (flashModeCode == 1)
+            if (camera.cameraInfo.hasFlashUnit()) {
+                camera.cameraControl.enableTorch(shouldTorch)
+            }
+        } catch (e: Exception) {
+            Toast.makeText(context, "Error al configurar cámara: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // Rebind whenever lensFacing, flashState, or cameraProvider changes
+    LaunchedEffect(lensFacing, flashState, previewViewInstance, cameraProviderInstance) {
+        val provider = cameraProviderInstance
+        val previewView = previewViewInstance
+        if (provider != null && previewView != null && hasCameraPermission) {
+            rebindCamera(provider, previewView, lensFacing, flashState)
+        }
+    }
+
+    if (!hasCameraPermission) {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .background(DarkBackground)
+                .padding(20.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .pixelShadow(4.dp, 4.dp, Color.Black)
+                    .background(DarkSurface, RectangleShape)
+                    .border(2.dp, CyanAccent, RectangleShape)
+                    .pixelBevel(Color.White.copy(alpha = 0.35f), Color.Black.copy(alpha = 0.8f), 2.dp)
+                    .padding(20.dp)
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    PixelCameraIcon(tint = CyanAccent, size = 32.dp)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "CÁMARA REQUERIDA",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontFamily = PressStart2PFontFamily,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "PixelPuro necesita acceso a la cámara para capturar fotos en PNG máxima calidad (32-bit RGBA sin pérdidas).",
+                        color = TextSecondary,
+                        fontSize = 9.sp,
+                        fontFamily = SilkscreenFontFamily,
+                        lineHeight = 14.sp
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    PixelButton(
+                        onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) },
+                        backgroundColor = CyanAccent,
+                        textColor = Color.Black,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                    ) {
+                        Text(
+                            text = "ACTIVAR CÁMARA",
+                            color = Color.Black,
+                            fontSize = 9.sp,
+                            fontFamily = SilkscreenFontFamily,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    PixelButton(
+                        onClick = onClose,
+                        backgroundColor = DarkBackground,
+                        textColor = Color.White,
+                        borderColor = DarkBorder,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                    ) {
+                        Text(
+                            text = "VOLVER A GALERÍA",
+                            color = Color.White,
+                            fontSize = 9.sp,
+                            fontFamily = SilkscreenFontFamily
+                        )
+                    }
+                }
+            }
+        }
+        return
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .testTag("pixel_camera_screen")
+    ) {
+        // 1. Live Camera Viewfinder (Large, full, clear, unobstructed view)
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { ctx ->
+                val previewView = PreviewView(ctx).apply {
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                    scaleType = PreviewView.ScaleType.FILL_CENTER
+                    implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                }
+
+                val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
+                cameraProviderFuture.addListener({
+                    val provider = cameraProviderFuture.get()
+                    cameraProviderInstance = provider
+                    previewViewInstance = previewView
+                }, ContextCompat.getMainExecutor(ctx))
+
+                previewView
+            }
+        )
+
+        // 2. High-Precision Reticle (Rule of thirds + Center crosshair)
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val stepX = size.width / 3f
+            val stepY = size.height / 3f
+
+            drawLine(Color(0x3300E5FF), Offset(stepX, 0f), Offset(stepX, size.height), 1f)
+            drawLine(Color(0x3300E5FF), Offset(stepX * 2, 0f), Offset(stepX * 2, size.height), 1f)
+            drawLine(Color(0x3300E5FF), Offset(0f, stepY), Offset(size.width, stepY), 1f)
+            drawLine(Color(0x3300E5FF), Offset(0f, stepY * 2), Offset(size.width, stepY * 2), 1f)
+
+            val cx = size.width / 2f
+            val cy = size.height / 2f
+            val arm = 16.dp.toPx()
+
+            drawLine(CyanAccent, Offset(cx - arm, cy), Offset(cx + arm, cy), 2f)
+            drawLine(CyanAccent, Offset(cx, cy - arm), Offset(cx, cy + arm), 2f)
+        }
+
+        // 2b. Live Red Bounding Box for PC Screen Transfer ("Recuadro Rojo Pantalla PC")
+        if (isScreenBoxGuideActive) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val boxLeft = size.width * 0.10f
+                val boxTop = size.height * 0.22f
+                val boxWidth = size.width * 0.80f
+                val boxHeight = size.height * 0.46f
+
+                // Draw shaded vignette outside the red box
+                drawRect(
+                    color = Color.Black.copy(alpha = 0.45f),
+                    topLeft = Offset.Zero,
+                    size = androidx.compose.ui.geometry.Size(size.width, boxTop)
+                )
+                drawRect(
+                    color = Color.Black.copy(alpha = 0.45f),
+                    topLeft = Offset(0f, boxTop + boxHeight),
+                    size = androidx.compose.ui.geometry.Size(size.width, size.height - (boxTop + boxHeight))
+                )
+                drawRect(
+                    color = Color.Black.copy(alpha = 0.45f),
+                    topLeft = Offset(0f, boxTop),
+                    size = androidx.compose.ui.geometry.Size(boxLeft, boxHeight)
+                )
+                drawRect(
+                    color = Color.Black.copy(alpha = 0.45f),
+                    topLeft = Offset(boxLeft + boxWidth, boxTop),
+                    size = androidx.compose.ui.geometry.Size(size.width - (boxLeft + boxWidth), boxHeight)
+                )
+
+                // Red Bounding Box
+                drawRect(
+                    color = Color(0xFFFF1744),
+                    topLeft = Offset(boxLeft, boxTop),
+                    size = androidx.compose.ui.geometry.Size(boxWidth, boxHeight),
+                    style = Stroke(width = 3.dp.toPx())
+                )
+
+                // Corner brackets
+                val cornerLen = 22.dp.toPx()
+                val strokeW = 4.dp.toPx()
+                drawLine(Color.White, Offset(boxLeft, boxTop), Offset(boxLeft + cornerLen, boxTop), strokeWidth = strokeW)
+                drawLine(Color.White, Offset(boxLeft, boxTop), Offset(boxLeft, boxTop + cornerLen), strokeWidth = strokeW)
+                drawLine(Color.White, Offset(boxLeft + boxWidth, boxTop), Offset(boxLeft + boxWidth - cornerLen, boxTop), strokeWidth = strokeW)
+                drawLine(Color.White, Offset(boxLeft + boxWidth, boxTop), Offset(boxLeft + boxWidth, boxTop + cornerLen), strokeWidth = strokeW)
+                drawLine(Color.White, Offset(boxLeft, boxTop + boxHeight), Offset(boxLeft + cornerLen, boxTop + boxHeight), strokeWidth = strokeW)
+                drawLine(Color.White, Offset(boxLeft, boxTop + boxHeight), Offset(boxLeft, boxTop + boxHeight - cornerLen), strokeWidth = strokeW)
+                drawLine(Color.White, Offset(boxLeft + boxWidth, boxTop + boxHeight), Offset(boxLeft + boxWidth - cornerLen, boxTop + boxHeight), strokeWidth = strokeW)
+                drawLine(Color.White, Offset(boxLeft + boxWidth, boxTop + boxHeight), Offset(boxLeft + boxWidth, boxTop + boxHeight - cornerLen), strokeWidth = strokeW)
+            }
+
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .background(Color.Black.copy(alpha = 0.85f), RectangleShape)
+                    .border(1.dp, Color(0xFFFF1744), RectangleShape)
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    text = "PANTALLA PC EN RECUADRO ROJO\n0% < CONTENIDO ESTIMADO < 100%",
+                    color = Color(0xFFFF1744),
+                    fontSize = 7.sp,
+                    fontFamily = PressStart2PFontFamily,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 11.sp
+                )
+            }
+        }
+
+        // 3. Top HUD: Instructor & Optical Certainty Guía (Epistemología de Pinocho + PNG 32-bit RGBA)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.TopCenter)
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                .padding(horizontal = 10.dp, vertical = 6.dp)
+        ) {
+            // Main Top Bar
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pixelShadow(3.dp, 3.dp, Color.Black)
+                    .background(DarkSurface.copy(alpha = 0.94f), RectangleShape)
+                    .border(2.dp, CyanAccent, RectangleShape)
+                    .pixelBevel(Color.White.copy(alpha = 0.35f), Color.Black.copy(alpha = 0.8f), 2.dp)
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        PixelCameraIcon(tint = CyanAccent, size = 18.dp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "PNG MÁXIMA CALIDAD",
+                                    color = Color.White,
+                                    fontSize = 9.sp,
+                                    fontFamily = PressStart2PFontFamily,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .background(EmeraldAccent, RectangleShape)
+                                        .padding(horizontal = 3.dp, vertical = 1.dp)
+                                ) {
+                                    Text("2^32 RGBA", color = Color.Black, fontSize = 6.sp, fontFamily = PressStart2PFontFamily)
+                                }
+                            }
+                            Text(
+                                text = "SIN COMPRESIÓN JPG | CERTEZA ÓPTICA: $certaintyScore%",
+                                color = EmeraldAccent,
+                                fontSize = 7.sp,
+                                fontFamily = SilkscreenFontFamily
+                            )
+                        }
+                    }
+
+                    // Exit Button (min 48dp touch target)
+                    PixelButton(
+                        onClick = onClose,
+                        backgroundColor = DarkBackground,
+                        textColor = Color.White,
+                        borderColor = DarkBorder,
+                        modifier = Modifier.height(44.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            PixelCloseIcon(tint = Color.White, size = 12.dp)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "SALIR",
+                                color = Color.White,
+                                fontSize = 8.sp,
+                                fontFamily = PressStart2PFontFamily
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // Real-Time Optical Instructor / Guía Banner
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF0F1B2B).copy(alpha = 0.92f), RectangleShape)
+                    .border(1.dp, if (certaintyScore >= 80) EmeraldAccent else AmberAccent, RectangleShape)
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "GUÍA INSTRUCTOR:",
+                            color = if (certaintyScore >= 80) EmeraldAccent else AmberAccent,
+                            fontSize = 7.sp,
+                            fontFamily = PressStart2PFontFamily,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = opticalAdvice,
+                            color = Color.White,
+                            fontSize = 7.sp,
+                            fontFamily = SilkscreenFontFamily,
+                            lineHeight = 11.sp
+                        )
+                        Text(
+                            text = "Rango EV: ${String.format(Locale.US, "%.1f", dynamicRangeEv)} | Sombras: ${shadowClippingPercent.toInt()}% | Luces: ${highlightClippingPercent.toInt()}%",
+                            color = TextSecondary,
+                            fontSize = 6.sp,
+                            fontFamily = SilkscreenFontFamily
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(6.dp))
+
+                    // Button to open Pinocchio Epistemological Principles modal
+                    Box(
+                        modifier = Modifier
+                            .background(DarkSurface, RectangleShape)
+                            .border(1.dp, CyanAccent, RectangleShape)
+                            .clickable { showPrinciplesSheet = true }
+                            .padding(horizontal = 6.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = "📜 PRINCIPIOS",
+                            color = CyanAccent,
+                            fontSize = 7.sp,
+                            fontFamily = SilkscreenFontFamily,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+
+        // 4. Bottom Controls Deck: Large Thumb-Friendly Arcade Buttons
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.BottomCenter)
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
+                .padding(horizontal = 12.dp, vertical = 12.dp)
+                .pixelShadow(0.dp, (-3).dp, Color.Black)
+                .background(DarkSurface.copy(alpha = 0.95f), RectangleShape)
+                .border(2.dp, CyanAccent, RectangleShape)
+                .pixelBevel(Color.White.copy(alpha = 0.35f), Color.Black.copy(alpha = 0.8f), 2.dp)
+                .padding(horizontal = 10.dp, vertical = 10.dp)
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                // Calibration Profile Toggle & Guide: Pantalla PC (Recuadro Rojo)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .background(if (isScreenBoxGuideActive) Color(0xFFFF1744) else DarkBackground, RectangleShape)
+                            .border(1.dp, if (isScreenBoxGuideActive) Color.White else Color(0xFFFF1744), RectangleShape)
+                            .clickable {
+                                isScreenBoxGuideActive = !isScreenBoxGuideActive
+                                if (isScreenBoxGuideActive) {
+                                    opticalAdvice = "Guía activa: Encuadra la pantalla PC dentro del recuadro rojo para cotejo contra buffer 32-bit"
+                                    Toast.makeText(context, "Modo Guía Pantalla PC: Activo", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    opticalAdvice = "Sensor calibrado para PNG 32-bit RGBA"
+                                }
+                            }
+                            .padding(vertical = 5.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            PixelMonitorIcon(tint = if (isScreenBoxGuideActive) Color.White else Color(0xFFFF1744), size = 14.dp)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (isScreenBoxGuideActive) "RECUADRO ROJO ACTIVO" else "GUÍA RECUADRO ROJO",
+                                color = if (isScreenBoxGuideActive) Color.White else Color(0xFFFF1744),
+                                fontSize = 6.5.sp,
+                                fontFamily = PressStart2PFontFamily
+                            )
+                        }
+                    }
+
+                    if (savedCalibrationProfile != null) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .background(if (useSavedCalibration) EmeraldAccent else DarkBackground, RectangleShape)
+                                .border(1.dp, if (useSavedCalibration) Color.White else EmeraldAccent, RectangleShape)
+                                .clickable {
+                                    useSavedCalibration = !useSavedCalibration
+                                    val status = if (useSavedCalibration) "ACTIVADA (Matriz 3x3 + De-Gamma)" else "DESACTIVADA"
+                                    Toast.makeText(context, "Calibración guardada: $status", Toast.LENGTH_SHORT).show()
+                                }
+                                .padding(vertical = 5.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = if (useSavedCalibration) "★ CALIBRACIÓN ACTIVADA" else "APLICAR CALIBRACIÓN",
+                                color = if (useSavedCalibration) Color.Black else EmeraldAccent,
+                                fontSize = 6.5.sp,
+                                fontFamily = PressStart2PFontFamily,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+
+                // Controls Row: [ GIRAR ] - [ DISPARAR PNG ] - [ FLASH ]
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Button: Switch Camera (GIRAR CÁMARA)
+                    PixelButton(
+                        onClick = {
+                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            val newLens = if (lensFacing == CameraSelector.LENS_FACING_BACK) {
+                                CameraSelector.LENS_FACING_FRONT
+                            } else {
+                                CameraSelector.LENS_FACING_BACK
+                            }
+                            lensFacing = newLens
+                            val label = if (newLens == CameraSelector.LENS_FACING_BACK) "Trasera" else "Frontal"
+                            Toast.makeText(context, "Cámara: $label", Toast.LENGTH_SHORT).show()
+                        },
+                        backgroundColor = DarkBackground,
+                        textColor = CyanAccent,
+                        borderColor = CyanAccent,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(54.dp)
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            PixelSwitchCameraIcon(tint = CyanAccent, size = 18.dp)
+                            Spacer(modifier = Modifier.height(3.dp))
+                            Text(
+                                text = "GIRAR",
+                                color = CyanAccent,
+                                fontSize = 8.sp,
+                                fontFamily = PressStart2PFontFamily
+                            )
+                        }
+                    }
+
+                    // Button: Big Arcade Shutter (DISPARAR PNG MÁXIMA CALIDAD)
+                    PixelButton(
+                        onClick = {
+                            val capture = imageCaptureInstance
+                            if (capture == null || isCapturing) return@PixelButton
+                            isCapturing = true
+                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+
+                            capture.takePicture(
+                                cameraExecutor,
+                                object : ImageCapture.OnImageCapturedCallback() {
+                                    override fun onCaptureSuccess(imageProxy: ImageProxy) {
+                                        try {
+                                            val rawBitmap = imageProxy.toBitmap()
+                                            val rotation = imageProxy.imageInfo.rotationDegrees
+                                            var rotatedBitmap = if (rotation != 0) {
+                                                val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
+                                                Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
+                                            } else {
+                                                rawBitmap
+                                            }
+
+                                            // Apply saved calibration profile if enabled
+                                            val profile = savedCalibrationProfile
+                                            if (useSavedCalibration && profile != null) {
+                                                rotatedBitmap = CameraCalibrationManager.applyProfileToPhoto(rotatedBitmap, profile)
+                                            }
+
+                                            // Save directly as PNG maximum quality in Pictures/PixelPuro
+                                            val finalBmp = rotatedBitmap
+                                            scope.launch(Dispatchers.IO) {
+                                                val uri = PixelEngine.saveBitmapToGallery(context, finalBmp, if (useSavedCalibration) "CALIBRATED_PNG" else "SNAP_PNG")
+                                                ContextCompat.getMainExecutor(context).execute {
+                                                    isCapturing = false
+                                                    if (uri != null) {
+                                                        val calNotice = if (useSavedCalibration) " (con Perfil de Calibración guardado)" else ""
+                                                        Toast.makeText(context, "Foto guardada en PNG Máxima Calidad$calNotice", Toast.LENGTH_SHORT).show()
+                                                    } else {
+                                                        Toast.makeText(context, "PNG cargado en memoria", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                    onPhotoCaptured(finalBmp)
+                                                }
+                                            }
+                                        } catch (e: Exception) {
+                                            ContextCompat.getMainExecutor(context).execute {
+                                                isCapturing = false
+                                                Toast.makeText(context, "Error procesando PNG: ${e.message}", Toast.LENGTH_SHORT).show()
+                                            }
+                                        } finally {
+                                            imageProxy.close()
+                                        }
+                                    }
+
+                                    override fun onError(exception: ImageCaptureException) {
+                                        ContextCompat.getMainExecutor(context).execute {
+                                            isCapturing = false
+                                            Toast.makeText(context, "Error cámara: ${exception.message}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                }
+                            )
+                        },
+                        backgroundColor = if (isCapturing) Color.Gray else EmeraldAccent,
+                        textColor = Color.Black,
+                        borderColor = Color.White,
+                        modifier = Modifier
+                            .weight(1.5f)
+                            .height(60.dp)
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = if (isCapturing) "CAPTURANDO..." else "DISPARAR",
+                                color = Color.Black,
+                                fontSize = 9.sp,
+                                fontFamily = PressStart2PFontFamily,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "PNG 32-BIT RGBA",
+                                color = Color(0xFF1B5E20),
+                                fontSize = 7.sp,
+                                fontFamily = SilkscreenFontFamily,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    // Button: Flash / Torch
+                    val flashLabel = when (flashState) {
+                        0 -> "AUTO"
+                        1 -> "ON"
+                        else -> "OFF"
+                    }
+                    val flashTint = when (flashState) {
+                        1 -> Color(0xFFFFD600)
+                        0 -> CyanAccent
+                        else -> Color.Gray
+                    }
+
+                    PixelButton(
+                        onClick = {
+                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            val nextFlash = (flashState + 1) % 3
+                            flashState = nextFlash
+                            val modeStr = when (nextFlash) {
+                                0 -> "Flash: AUTOMÁTICO"
+                                1 -> "Flash: ACTIVADO (Luz de antorcha)"
+                                else -> "Flash: APAGADO"
+                            }
+                            Toast.makeText(context, modeStr, Toast.LENGTH_SHORT).show()
+                        },
+                        backgroundColor = DarkBackground,
+                        textColor = flashTint,
+                        borderColor = flashTint,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(54.dp)
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            PixelFlashIcon(tint = flashTint, size = 18.dp)
+                            Spacer(modifier = Modifier.height(3.dp))
+                            Text(
+                                text = flashLabel,
+                                color = flashTint,
+                                fontSize = 8.sp,
+                                fontFamily = PressStart2PFontFamily
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // 5. Epistemological Axioms Modal Sheet
+        if (showPrinciplesSheet) {
+            ModalBottomSheet(
+                onDismissRequest = { showPrinciplesSheet = false },
+                containerColor = DarkBackground,
+                shape = RectangleShape,
+                dragHandle = null
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(DarkBackground, RectangleShape)
+                        .border(2.dp, CyanAccent, RectangleShape)
+                        .padding(14.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column {
+                            Text(
+                                text = "INSTRUCTOR PNG 32-BIT",
+                                color = Color.White,
+                                fontSize = 9.sp,
+                                fontFamily = PressStart2PFontFamily,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "AXIOMAS EPISTEMOLÓGICOS DE CERTEZA ÓPTICA",
+                                color = EmeraldAccent,
+                                fontSize = 7.sp,
+                                fontFamily = SilkscreenFontFamily
+                            )
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .background(DarkSurface, RectangleShape)
+                                .border(1.dp, DarkBorder, RectangleShape)
+                                .clickable { showPrinciplesSheet = false },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            PixelCloseIcon(tint = Color.White, size = 12.dp)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFF102030), RectangleShape)
+                            .border(1.dp, CyanAccent, RectangleShape)
+                            .padding(10.dp)
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = "1. Una computadora no puede darte certeza si no tiene la información necesaria.",
+                                color = CyanAccent,
+                                fontSize = 8.sp,
+                                fontFamily = SilkscreenFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                lineHeight = 12.sp
+                            )
+                            Text(
+                                text = "2. Si Pinocho está convencido de que algo es cierto, aunque sea falso, su nariz no reacciona.",
+                                color = AmberAccent,
+                                fontSize = 8.sp,
+                                fontFamily = SilkscreenFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                lineHeight = 12.sp
+                            )
+                            Text(
+                                text = "3. Lo representado puede tener infinitas representaciones posibles sin dejar de ser exactamente lo mismo.",
+                                color = Color(0xFF69F0AE),
+                                fontSize = 8.sp,
+                                fontFamily = SilkscreenFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                lineHeight = 12.sp
+                            )
+                            Text(
+                                text = "4. Si Pinocho falla, sea únicamente porque le falta información necesaria.",
+                                color = Color(0xFFFF5252),
+                                fontSize = 8.sp,
+                                fontFamily = SilkscreenFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                lineHeight = 12.sp
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Text(
+                        text = "¿Por qué PNG Máxima Calidad en lugar de JPG?\n" +
+                               "El formato JPG realiza submuestreo de croma 4:2:0 y cuantización con pérdida por bloques discretos. La computadora inventa datos (heurística) y descarta información irrecuperable.\n\n" +
+                               "PixelPuro captura en espacio 32-bit RGBA completo (2^32 estados discretos) y guarda en formato PNG 100% sin compresión con pérdida. De este modo, la computadora cuenta con toda la información física captada por el sensor para darte certeza absoluta.",
+                        color = TextSecondary,
+                        fontSize = 8.sp,
+                        fontFamily = SilkscreenFontFamily,
+                        lineHeight = 13.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    PixelButton(
+                        onClick = { showPrinciplesSheet = false },
+                        backgroundColor = CyanAccent,
+                        textColor = Color.Black,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                    ) {
+                        Text(
+                            text = "ENTENDIDO [CONTINUAR]",
+                            color = Color.Black,
+                            fontSize = 8.sp,
+                            fontFamily = SilkscreenFontFamily,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+    }
+}

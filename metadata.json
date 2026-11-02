@@ -1,0 +1,6 @@
+{
+  "name": "PixelPuro",
+  "description": "Galería pixel por pixel 1:1 sin alteración, cuentagotas quirúrgico con lupa offset, analizador RGBA/Hex8, comprobador de integridad, capturas y editor de píxeles.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
