@@ -132,26 +132,48 @@ private fun copyRgbaFrame(image: ImageProxy): CameraRgbaFrame {
     val limit = source.limit()
     val pixelStride = plane.pixelStride
     val rowStride = plane.rowStride
-    val width = image.width
-    val height = image.height
+    val crop = image.cropRect
+    val cropWidth = crop.width()
+    val cropHeight = crop.height()
     require(pixelStride >= 4) { "Pixel stride RGBA inesperado: $pixelStride" }
+    require(cropWidth > 0 && cropHeight > 0) {
+        "La región de recorte de la cámara está vacía: $crop."
+    }
 
-    val output = ByteArray(Math.multiplyExact(Math.multiplyExact(width, height), 4))
-    for (y in 0 until height) {
-        val rowStart = start + y * rowStride
-        for (x in 0 until width) {
-            val src = rowStart + x * pixelStride
+    // ImageProxy puede contener más píxeles que los que Preview muestra.
+    // El ViewPort compartido define cropRect; copiar el frame completo ignoraría ese recorte.
+    val output = ByteArray(Math.multiplyExact(Math.multiplyExact(cropWidth, cropHeight), 4))
+    for (y in 0 until cropHeight) {
+        val rowStart = start + (crop.top + y) * rowStride
+        for (x in 0 until cropWidth) {
+            val src = rowStart + (crop.left + x) * pixelStride
             require(src >= start && src + 3 < limit) {
-                "El buffer RGBA no contiene el píxel ($x,$y) completo."
+                "El buffer RGBA no contiene el píxel recortado ($x,$y) completo."
             }
-            val dst = (y * width + x) * 4
+            val dst = (y * cropWidth + x) * 4
             output[dst] = source.get(src)
             output[dst + 1] = source.get(src + 1)
             output[dst + 2] = source.get(src + 2)
             output[dst + 3] = source.get(src + 3)
         }
     }
-    return CameraRgbaFrame(width, height, output, image.imageInfo.rotationDegrees)
+    return CameraRgbaFrame(cropWidth, cropHeight, output, image.imageInfo.rotationDegrees)
+}
+
+/** Refleja horizontalmente el fotograma para igualar la vista previa de la cámara frontal. */
+private fun mirrorRgbaFrameHorizontally(frame: CameraRgbaFrame): CameraRgbaFrame {
+    val output = ByteArray(frame.rgba.size)
+    for (y in 0 until frame.height) {
+        for (x in 0 until frame.width) {
+            val src = (y * frame.width + x) * 4
+            val dst = (y * frame.width + (frame.width - 1 - x)) * 4
+            output[dst] = frame.rgba[src]
+            output[dst + 1] = frame.rgba[src + 1]
+            output[dst + 2] = frame.rgba[src + 2]
+            output[dst + 3] = frame.rgba[src + 3]
+        }
+    }
+    return CameraRgbaFrame(frame.width, frame.height, output, frame.rotationDegrees)
 }
 
 /** Rota píxeles mediante reordenamiento de bytes; no interpola ni mezcla píxeles. */
@@ -944,7 +966,12 @@ fun PixelCameraScreen(
                             try {
                                 // La imagen principal del editor procede exclusivamente del plano RGBA_8888.
                                 // La rotación reordena píxeles y no aplica interpolación.
-                                val uprightFrame = rotateRgbaFrame(rgbaFrame)
+                                var uprightFrame = rotateRgbaFrame(rgbaFrame)
+                                // PreviewView espeja automáticamente la cámara frontal.
+                                // ImageAnalysis no aplica ese espejo por sí mismo.
+                                if (lensFacing == CameraSelector.LENS_FACING_FRONT) {
+                                    uprightFrame = mirrorRgbaFrameHorizontally(uprightFrame)
+                                }
                                 val rgbaBitmap = rgbaFrameToBitmap(uprightFrame)
                                 val stamp = System.currentTimeMillis()
 
