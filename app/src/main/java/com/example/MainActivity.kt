@@ -142,6 +142,11 @@ fun PixelPuroApp(
     var showFloatingDialog by remember { mutableStateOf(false) }
     var showCalibrationDialog by remember { mutableStateOf(false) }
     var showScreenAnalyzerDialog by remember { mutableStateOf(false) }
+    var screenAnalyzerReferenceBuffer by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var screenAnalyzerNormalizedRect by remember {
+        mutableStateOf(com.example.model.NormalizedRect(left = 0.12f, top = 0.15f, right = 0.88f, bottom = 0.85f))
+    }
+    var returnToScreenAnalyzerAfterCapture by remember { mutableStateOf(false) }
     var calibrationColorTarget by remember { mutableStateOf<PixelColor?>(null) }
 
     val mediaPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -385,7 +390,16 @@ fun PixelPuroApp(
                                         .size(28.dp)
                                         .background(DarkBackground, RectangleShape)
                                         .border(1.dp, Color(0xFFFF1744), RectangleShape)
-                                        .clickable { showScreenAnalyzerDialog = true }
+                                        .clickable {
+                                            screenAnalyzerReferenceBuffer = when (activePreset) {
+                                                com.example.model.PresetType.TWO_PIXEL_HARDWARE_TEST -> com.example.util.PixelEngine.createTwoPixelBitmap()
+                                                com.example.model.PresetType.NYQUIST_CHECKERBOARD -> com.example.util.PixelEngine.createNyquistCheckerboard()
+                                                com.example.model.PresetType.PALETTE_16_TEST -> com.example.util.PixelEngine.createPalette16Bitmap()
+                                                com.example.model.PresetType.RETRO_PIXEL_ART -> com.example.util.PixelEngine.createRetroPixelArt()
+                                                com.example.model.PresetType.CUSTOM_IMPORTED -> currentBitmap
+                                            }
+                                            showScreenAnalyzerDialog = true
+                                        }
                                         .testTag("screen_vs_buffer_top_button"),
                                     contentAlignment = Alignment.Center
                                 ) {
@@ -687,9 +701,17 @@ fun PixelPuroApp(
                 viewModel.updateBitmap(bitmap)
                 viewModel.scanDevicePhotos(context, autoSelectLatest = true)
                 showCameraScreen = false
+                if (returnToScreenAnalyzerAfterCapture) {
+                    returnToScreenAnalyzerAfterCapture = false
+                    showScreenAnalyzerDialog = true
+                }
             },
             onClose = {
                 showCameraScreen = false
+                if (returnToScreenAnalyzerAfterCapture) {
+                    returnToScreenAnalyzerAfterCapture = false
+                    showScreenAnalyzerDialog = true
+                }
             }
         )
     }
@@ -785,7 +807,7 @@ fun PixelPuroApp(
 
     // Dialog: Screen vs 32-bit Buffer Cotejo (Recuadro Rojo Pantalla PC)
     if (showScreenAnalyzerDialog) {
-        val refBuffer = when (activePreset) {
+        val refBuffer = screenAnalyzerReferenceBuffer ?: when (activePreset) {
             com.example.model.PresetType.TWO_PIXEL_HARDWARE_TEST -> com.example.util.PixelEngine.createTwoPixelBitmap()
             com.example.model.PresetType.NYQUIST_CHECKERBOARD -> com.example.util.PixelEngine.createNyquistCheckerboard()
             com.example.model.PresetType.PALETTE_16_TEST -> com.example.util.PixelEngine.createPalette16Bitmap()
@@ -796,17 +818,30 @@ fun PixelPuroApp(
         ScreenVsBufferAnalyzerDialog(
             cameraPhoto = currentBitmap,
             referenceBuffer = refBuffer,
+            initialNormalizedRect = screenAnalyzerNormalizedRect,
             onSaveReconstructed = { reconstructed ->
                 viewModel.saveEditedBitmapToGallery(context, reconstructed)
             },
             onLoadToCanvas = { reconstructed ->
                 viewModel.updateBitmap(reconstructed)
             },
-            onOpenCameraForImagen2 = {
+            onOpenCameraForImagen2 = { selectedReference, selectedRect ->
+                // Guardar las elecciones del diálogo (incluida Imagen 1 cargada desde galería)
+                // antes de cerrarlo para abrir la cámara.
+                screenAnalyzerReferenceBuffer = selectedReference
+                screenAnalyzerNormalizedRect = selectedRect
+                returnToScreenAnalyzerAfterCapture = true
                 showScreenAnalyzerDialog = false
                 showCameraScreen = true
             },
-            onDismiss = { showScreenAnalyzerDialog = false }
+            onDismiss = {
+                showScreenAnalyzerDialog = false
+                screenAnalyzerReferenceBuffer = null
+                screenAnalyzerNormalizedRect = com.example.model.NormalizedRect(
+                    left = 0.12f, top = 0.15f, right = 0.88f, bottom = 0.85f
+                )
+                returnToScreenAnalyzerAfterCapture = false
+            }
         )
     }
 }
