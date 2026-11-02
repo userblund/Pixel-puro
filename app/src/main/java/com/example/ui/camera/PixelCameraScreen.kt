@@ -106,6 +106,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.log2
 
 import com.example.util.CameraCalibrationManager
@@ -138,6 +139,96 @@ private fun decodeBitmapRespectingExif(file: File): Bitmap? {
         else -> return decoded
     }
     return Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, transform, false)
+}
+
+private data class CameraRgbaFrame(
+    val width: Int,
+    val height: Int,
+    val rgba: ByteArray,
+    val rotationDegrees: Int
+)
+
+/**
+ * Copia el plano RGBA_8888 a memoria propia antes de cerrar ImageProxy.
+ * La copia queda empaquetada como R,G,B,A sin padding entre píxeles ni filas.
+ */
+private fun copyRgbaFrame(image: ImageProxy): CameraRgbaFrame {
+    require(image.format == ImageFormat.FLEX_RGBA_8888) {
+        "ImageAnalysis no entregó FLEX_RGBA_8888 (formato=undefined)."
+    }
+    val plane = image.planes.single()
+    val source = plane.buffer
+    val start = source.position()
+    val limit = source.limit()
+    val pixelStride = plane.pixelStride
+    val rowStride = plane.rowStride
+    val width = image.width
+    val height = image.height
+    require(pixelStride >= 4) { "Pixel stride RGBA inesperado: $pixelStride" }
+
+    val output = ByteArray(Math.multiplyExact(Math.multiplyExact(width, height), 4))
+    for (y in 0 until height) {
+        val rowStart = start + y * rowStride
+        for (x in 0 until width) {
+            val src = rowStart + x * pixelStride
+            require(src >= start && src + 3 < limit) {
+                "El buffer RGBA no contiene el píxel ($x,$y) completo."
+            }
+            val dst = (y * width + x) * 4
+            output[dst] = source.get(src)
+            output[dst + 1] = source.get(src + 1)
+            output[dst + 2] = source.get(src + 2)
+            output[dst + 3] = source.get(src + 3)
+        }
+    }
+    return CameraRgbaFrame(width, height, output, image.imageInfo.rotationDegrees)
+}
+
+/** Rota píxeles mediante reordenamiento de bytes; no interpola ni mezcla píxeles. */
+private fun rotateRgbaFrame(frame: CameraRgbaFrame): CameraRgbaFrame {
+    val rotation = ((frame.rotationDegrees % 360) + 360) % 360
+    if (rotation == 0) return frame
+    require(rotation == 90 || rotation == 180 || rotation == 270) {
+        "Rotación de cámara no compatible: $rotation°."
+    }
+    val outWidth = if (rotation == 90 || rotation == 270) frame.height else frame.width
+    val outHeight = if (rotation == 90 || rotation == 270) frame.width else frame.height
+    val output = ByteArray(frame.rgba.size)
+    for (y in 0 until frame.height) {
+        for (x in 0 until frame.width) {
+            val (dx, dy) = when (rotation) {
+                90 -> frame.height - 1 - y to x
+                180 -> frame.width - 1 - x to frame.height - 1 - y
+                else -> y to frame.width - 1 - x
+            }
+            val src = (y * frame.width + x) * 4
+            val dst = (dy * outWidth + dx) * 4
+            output[dst] = frame.rgba[src]
+            output[dst + 1] = frame.rgba[src + 1]
+            output[dst + 2] = frame.rgba[src + 2]
+            output[dst + 3] = frame.rgba[src + 3]
+        }
+    }
+    return CameraRgbaFrame(outWidth, outHeight, output, 0)
+}
+
+/**
+ * Bitmap Android usa Config.ARGB_8888 como representación de 32 bpp.
+ * Los bytes RGBA se convierten canal por canal sin cuantización ni interpolación.
+ */
+private fun rgbaFrameToBitmap(frame: CameraRgbaFrame): Bitmap {
+    val pixels = IntArray(Math.multiplyExact(frame.width, frame.height))
+    for (i in pixels.indices) {
+        val offset = i * 4
+        val r = frame.rgba[offset].toInt() and 0xFF
+        val g = frame.rgba[offset + 1].toInt() and 0xFF
+        val b = frame.rgba[offset + 2].toInt() and 0xFF
+        val a = frame.rgba[offset + 3].toInt() and 0xFF
+        pixels[i] = (a shl 24) or (r shl 16) or (g shl 8) or b
+    }
+    return Bitmap.createBitmap(frame.width, frame.height, Bitmap.Config.ARGB_8888).also {
+        it.setPixels(pixels, 0, frame.width, 0, 0, frame.width, frame.height)
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalImageCaptureOutputFormat::class)
@@ -193,6 +284,8 @@ fun PixelCameraScreen(
     var activeCamera by remember { mutableStateOf<Camera?>(null) }
     var imageCaptureInstance by remember { mutableStateOf<ImageCapture?>(null) }
     var rawCaptureSupported by remember { mutableStateOf(false) }
+    // Último fotograma completo RGBA_8888, copiado antes de cerrar ImageProxy.
+    val latestRgbaFrame = remember { AtomicReference<CameraRgbaFrame?>(null) }
 
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
 
@@ -229,6 +322,7 @@ fun PixelCameraScreen(
             activeCamera = null
             imageCaptureInstance = null
             rawCaptureSupported = false
+            latestRgbaFrame.set(null)
 
             val preview = Preview.Builder().build().also {
                 it.surfaceProvider = previewView.surfaceProvider
@@ -266,6 +360,7 @@ fun PixelCameraScreen(
 
             imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
                 try {
+                    latestRgbaFrame.set(copyRgbaFrame(imageProxy))
                     val plane = imageProxy.planes[0]
                     val buffer = plane.buffer
                     val bufferStart = buffer.position()
@@ -869,132 +964,79 @@ fun PixelCameraScreen(
                             isCapturing = true
                             view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
 
-                            if (rawCaptureSupported) {
-                                // Se conserva RAW_SENSOR en DNG. El JPEG simultáneo alimenta
-                                // el Bitmap PNG del editor; no sustituye al archivo RAW.
-                                val stamp = System.currentTimeMillis()
-                                val rawDirectory = File(
-                                    context.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: context.filesDir,
-                                    "PixelPuro/RAW"
-                                ).apply { mkdirs() }
-                                val rawFile = File(rawDirectory, "PixelPuro_${stamp}.dng")
-                                val jpegFile = File(context.cacheDir, "PixelPuro_${stamp}.jpg")
-                                val rawOptions = ImageCapture.OutputFileOptions.Builder(rawFile).build()
-                                val jpegOptions = ImageCapture.OutputFileOptions.Builder(jpegFile).build()
-                                val targetRotation = previewViewInstance?.display?.rotation ?: Surface.ROTATION_0
-                                capture.targetRotation = targetRotation
-                                var rawFileSaved = false
-                                var jpegFileSaved = false
-                                var jpegProcessed = false
+                            val rgbaFrame = latestRgbaFrame.get()
+                            if (rgbaFrame == null) {
+                                isCapturing = false
+                                Toast.makeText(context, "Aún no hay un fotograma RGBA_8888 disponible. Espera a que la vista previa se estabilice.", Toast.LENGTH_LONG).show()
+                                return@PixelButton
+                            }
 
-                                capture.takePicture(
-                                    rawOptions,
-                                    jpegOptions,
-                                    cameraExecutor,
-                                    object : ImageCapture.OnImageSavedCallback {
-                                        override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                                            when (outputFileResults.imageFormat) {
-                                                ImageFormat.RAW_SENSOR -> rawFileSaved = true
-                                                ImageFormat.JPEG -> jpegFileSaved = true
-                                            }
-                                            // Esperar a que ambos archivos hayan terminado de escribirse.
-                                            if (!rawFileSaved || !jpegFileSaved || jpegProcessed) return
-                                            jpegProcessed = true
-                                            try {
-                                                val decodedBitmap = decodeBitmapRespectingExif(jpegFile)
-                                                    ?: throw IllegalStateException("No se pudo decodificar el JPEG")
-                                                val profile = savedCalibrationProfile
-                                                if (useSavedCalibration && profile != null) {
-                                                    rotatedBitmap = CameraCalibrationManager.applyProfileToPhoto(rotatedBitmap, profile)
+                            try {
+                                // La imagen principal del editor procede exclusivamente del plano RGBA_8888.
+                                // La rotación reordena píxeles y no aplica interpolación.
+                                val uprightFrame = rotateRgbaFrame(rgbaFrame)
+                                val rgbaBitmap = rgbaFrameToBitmap(uprightFrame)
+                                val stamp = System.currentTimeMillis()
+
+                                // La captura fija RAW/JPEG, si existe, se conserva por separado.
+                                // Nunca se utiliza su JPEG como fuente del editor.
+                                if (rawCaptureSupported) {
+                                    val rawDirectory = File(
+                                        context.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: context.filesDir,
+                                        "PixelPuro/RAW"
+                                    ).apply { mkdirs() }
+                                    val rawFile = File(rawDirectory, "PixelPuro_${stamp}.dng")
+                                    val jpegFile = File(context.cacheDir, "PixelPuro_${stamp}_aux.jpg")
+                                    val rawOptions = ImageCapture.OutputFileOptions.Builder(rawFile).build()
+                                    val jpegOptions = ImageCapture.OutputFileOptions.Builder(jpegFile).build()
+                                    val stillCapture = imageCaptureInstance
+                                    if (stillCapture != null) {
+                                        var rawSaved = false
+                                        var jpegSaved = false
+                                        stillCapture.takePicture(
+                                            rawOptions,
+                                            jpegOptions,
+                                            cameraExecutor,
+                                            object : ImageCapture.OnImageSavedCallback {
+                                                override fun onImageSaved(results: ImageCapture.OutputFileResults) {
+                                                    when (results.imageFormat) {
+                                                        ImageFormat.RAW_SENSOR -> rawSaved = true
+                                                        ImageFormat.JPEG -> jpegSaved = true
+                                                    }
+                                                    if (rawSaved && jpegSaved) jpegFile.delete()
                                                 }
-                                                val finalBmp = rotatedBitmap
-                                                scope.launch(Dispatchers.IO) {
-                                                    val uri = PixelEngine.saveBitmapToGallery(
-                                                        context, finalBmp,
-                                                        if (useSavedCalibration) "CALIBRATED_PNG" else "SNAP_PNG"
-                                                    )
+                                                override fun onError(exception: ImageCaptureException) {
                                                     jpegFile.delete()
                                                     ContextCompat.getMainExecutor(context).execute {
-                                                        isCapturing = false
-                                                        val status = if (uri != null) "PNG guardado." else "PNG disponible en memoria."
-                                                        Toast.makeText(
-                                                            context,
-                                                            "$status RAW DNG conservado: ${rawFile.absolutePath}",
-                                                            Toast.LENGTH_LONG
-                                                        ).show()
-                                                        onPhotoCaptured(finalBmp)
+                                                        Toast.makeText(context, "El fotograma RGBA se capturó; RAW adicional falló: ${exception.message}", Toast.LENGTH_LONG).show()
                                                     }
                                                 }
-                                            } catch (e: Exception) {
-                                                jpegFile.delete()
-                                                ContextCompat.getMainExecutor(context).execute {
-                                                    isCapturing = false
-                                                    Toast.makeText(context, "Error procesando RAW+JPEG: ${e.message}", Toast.LENGTH_LONG).show()
-                                                }
                                             }
-                                        }
-
-                                        override fun onError(exception: ImageCaptureException) {
-                                            jpegFile.delete()
-                                            ContextCompat.getMainExecutor(context).execute {
-                                                isCapturing = false
-                                                Toast.makeText(context, "Error en captura RAW+JPEG: ${exception.message}", Toast.LENGTH_LONG).show()
-                                            }
-                                        }
+                                        )
                                     }
-                                )
-                            } else {
-                                // Fallback explícito: el dispositivo no declara soporte RAW+JPEG.
-                                capture.takePicture(
-                                    cameraExecutor,
-                                    object : ImageCapture.OnImageCapturedCallback() {
-                                        override fun onCaptureSuccess(imageProxy: ImageProxy) {
-                                            try {
-                                                val decoded = imageProxy.toBitmap()
-                                                val rotation = imageProxy.imageInfo.rotationDegrees
-                                                var rotatedBitmap = if (rotation != 0) {
-                                                    val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
-                                                    Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
-                                                } else decoded
-                                                val profile = savedCalibrationProfile
-                                                if (useSavedCalibration && profile != null) {
-                                                    rotatedBitmap = CameraCalibrationManager.applyProfileToPhoto(rotatedBitmap, profile)
-                                                }
-                                                val finalBmp = rotatedBitmap
-                                                scope.launch(Dispatchers.IO) {
-                                                    val uri = PixelEngine.saveBitmapToGallery(
-                                                        context, finalBmp,
-                                                        if (useSavedCalibration) "CALIBRATED_PNG" else "SNAP_PNG"
-                                                    )
-                                                    ContextCompat.getMainExecutor(context).execute {
-                                                        isCapturing = false
-                                                        val status = if (uri != null) "PNG guardado." else "PNG disponible en memoria."
-                                                        Toast.makeText(
-                                                            context,
-                                                            "$status Captura JPEG: RAW+JPEG no disponible.",
-                                                            Toast.LENGTH_LONG
-                                                        ).show()
-                                                        onPhotoCaptured(finalBmp)
-                                                    }
-                                                }
-                                            } catch (e: Exception) {
-                                                ContextCompat.getMainExecutor(context).execute {
-                                                    isCapturing = false
-                                                    Toast.makeText(context, "Error procesando JPEG: ${e.message}", Toast.LENGTH_SHORT).show()
-                                                }
-                                            } finally {
-                                                imageProxy.close()
-                                            }
-                                        }
+                                }
 
-                                        override fun onError(exception: ImageCaptureException) {
-                                            ContextCompat.getMainExecutor(context).execute {
-                                                isCapturing = false
-                                                Toast.makeText(context, "Error cámara: ${exception.message}", Toast.LENGTH_SHORT).show()
-                                            }
-                                        }
+                                scope.launch(Dispatchers.IO) {
+                                    val uri = PixelEngine.saveBitmapToGallery(
+                                        context,
+                                        rgbaBitmap,
+                                        "RGBA8888_${stamp}"
+                                    )
+                                    ContextCompat.getMainExecutor(context).execute {
+                                        isCapturing = false
+                                        val status = if (uri != null) "PNG lossless guardado." else "PNG disponible en memoria."
+                                        val rawStatus = if (rawCaptureSupported) " RAW se conserva aparte cuando termina la captura." else " RAW no está disponible para esta lente."
+                                        Toast.makeText(
+                                            context,
+                                            "$status Fuente: fotograma RGBA_8888 real (${uprightFrame.width}×${uprightFrame.height}).$rawStatus",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                        onPhotoCaptured(rgbaBitmap)
                                     }
-                                )
+                                }
+                            } catch (e: Exception) {
+                                isCapturing = false
+                                Toast.makeText(context, "No se pudo convertir el fotograma RGBA_8888: ${e.message}", Toast.LENGTH_LONG).show()
                             }
                         },
                         backgroundColor = if (isCapturing) Color.Gray else EmeraldAccent,
@@ -1013,7 +1055,7 @@ fun PixelCameraScreen(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "PNG + RAW DNG si está disponible",
+                                text = "RGBA_8888 PNG + RAW aparte",
                                 color = Color(0xFF1B5E20),
                                 fontSize = 7.sp,
                                 fontFamily = SilkscreenFontFamily,
@@ -1166,8 +1208,8 @@ fun PixelCameraScreen(
 
                     Text(
                         text = "¿Qué conserva cada formato?\n" +
-                               "El flujo ImageAnalysis se convierte a RGBA_8888 para analizar fotogramas. ImageCapture no captura en RGBA_8888: cuando el dispositivo admite RAW+JPEG, PixelPuro conserva el original RAW_SENSOR como DNG y usa el JPEG simultáneo para crear el Bitmap PNG del editor.\n\n" +
-                               "El PNG evita una nueva pérdida al guardarse, pero no recupera información perdida en el JPEG. El DNG conserva datos RAW del sensor cuando el hardware lo admite; no todos los dispositivos ofrecen esa capacidad. La vista previa y la fotografía pueden diferir por resolución, encuadre, exposición y procesamiento. Ningún formato garantiza por sí solo certeza absoluta sobre la escena física.",
+                               "El editor recibe el último fotograma del flujo ImageAnalysis en RGBA_8888 (R,G,B,A de 8 bits por canal). Los bytes se copian antes de cerrar ImageProxy y la rotación solo reordena píxeles. El Bitmap de Android se construye canal por canal; su configuración pública se denomina ARGB_8888, aunque la fuente conservada en memoria es RGBA.\n\n" +
+                               "La fotografía fija RAW/JPEG es independiente: el DNG se conserva aparte cuando la lente lo admite y el JPEG auxiliar nunca sustituye al fotograma RGBA del editor. La resolución del flujo RGBA puede ser menor que la de ImageCapture. El PNG evita pérdidas adicionales al guardar, pero no recupera información que el sensor/procesamiento ya haya descartado.",
                         color = TextSecondary,
                         fontSize = 8.sp,
                         fontFamily = SilkscreenFontFamily,
