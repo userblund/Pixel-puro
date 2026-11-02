@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
 import android.graphics.Matrix
+import android.media.ExifInterface
 import android.os.Environment
 import android.view.HapticFeedbackConstants
 import android.view.Surface
@@ -109,6 +110,35 @@ import kotlin.math.log2
 
 import com.example.util.CameraCalibrationManager
 import com.example.util.CameraCalibrationProfile
+
+private fun decodeBitmapRespectingExif(file: File): Bitmap? {
+    val decoded = BitmapFactory.decodeFile(file.absolutePath) ?: return null
+    val orientation = runCatching {
+        ExifInterface(file.absolutePath).getAttributeInt(
+            ExifInterface.TAG_ORIENTATION,
+            ExifInterface.ORIENTATION_NORMAL
+        )
+    }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+
+    val transform = Matrix()
+    when (orientation) {
+        ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> transform.setScale(-1f, 1f)
+        ExifInterface.ORIENTATION_ROTATE_180 -> transform.setRotate(180f)
+        ExifInterface.ORIENTATION_FLIP_VERTICAL -> transform.setScale(1f, -1f)
+        ExifInterface.ORIENTATION_TRANSPOSE -> {
+            transform.setRotate(90f)
+            transform.postScale(-1f, 1f)
+        }
+        ExifInterface.ORIENTATION_ROTATE_90 -> transform.setRotate(90f)
+        ExifInterface.ORIENTATION_TRANSVERSE -> {
+            transform.setRotate(-90f)
+            transform.postScale(-1f, 1f)
+        }
+        ExifInterface.ORIENTATION_ROTATE_270 -> transform.setRotate(-90f)
+        else -> return decoded
+    }
+    return Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, transform, false)
+}
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalImageCaptureOutputFormat::class)
 @Composable
@@ -236,6 +266,7 @@ fun PixelCameraScreen(
                 try {
                     val plane = imageProxy.planes[0]
                     val buffer = plane.buffer
+                    val bufferStart = buffer.position()
                     val pixelStride = plane.pixelStride
                     val rowStride = plane.rowStride
                     val width = imageProxy.width
@@ -253,8 +284,8 @@ fun PixelCameraScreen(
                     for (y in 0 until height step stepY) {
                         val rowOffset = y * rowStride
                         for (x in 0 until width step stepX) {
-                            val index = rowOffset + x * pixelStride
-                            if (index + 2 < buffer.remaining()) {
+                            val index = bufferStart + rowOffset + x * pixelStride
+                            if (index + 2 < buffer.limit()) {
                                 val r = buffer.get(index).toInt() and 0xFF
                                 val g = buffer.get(index + 1).toInt() and 0xFF
                                 val b = buffer.get(index + 2).toInt() and 0xFF
@@ -827,7 +858,6 @@ fun PixelCameraScreen(
                                 val jpegOptions = ImageCapture.OutputFileOptions.Builder(jpegFile).build()
                                 val targetRotation = previewViewInstance?.display?.rotation ?: Surface.ROTATION_0
                                 capture.targetRotation = targetRotation
-                                val rotation = activeCamera?.cameraInfo?.getSensorRotationDegrees(targetRotation) ?: 0
                                 var rawFileSaved = false
                                 var jpegFileSaved = false
                                 var jpegProcessed = false
@@ -846,12 +876,8 @@ fun PixelCameraScreen(
                                             if (!rawFileSaved || !jpegFileSaved || jpegProcessed) return
                                             jpegProcessed = true
                                             try {
-                                                val decodedBitmap = BitmapFactory.decodeFile(jpegFile.absolutePath)
+                                                val decodedBitmap = decodeBitmapRespectingExif(jpegFile)
                                                     ?: throw IllegalStateException("No se pudo decodificar el JPEG")
-                                                var rotatedBitmap = if (rotation != 0) {
-                                                    val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
-                                                    Bitmap.createBitmap(decodedBitmap, 0, 0, decodedBitmap.width, decodedBitmap.height, matrix, true)
-                                                } else decodedBitmap
                                                 val profile = savedCalibrationProfile
                                                 if (useSavedCalibration && profile != null) {
                                                     rotatedBitmap = CameraCalibrationManager.applyProfileToPhoto(rotatedBitmap, profile)
