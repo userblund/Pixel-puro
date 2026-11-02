@@ -718,7 +718,7 @@ fun PixelPuroApp(
     if (showFullDeviceGallery) {
         Dialog(
             onDismissRequest = { showFullDeviceGallery = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
+            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
         ) {
             FullDeviceGalleryDialog(
                 photos = devicePhotos,
