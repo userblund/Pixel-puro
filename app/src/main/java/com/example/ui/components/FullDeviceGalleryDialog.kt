@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
@@ -252,7 +253,7 @@ fun FullDeviceGalleryDialog(
 private fun FastGalleryScrollbar(state: LazyGridState, modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
     BoxWithConstraints(
-        modifier = modifier.size(width = 16.dp, height = 1.dp).fillMaxHeight()
+        modifier = modifier.fillMaxHeight().width(16.dp)
             .background(Color.Transparent)
             .pointerInput(state) {
                 detectDragGestures(
@@ -281,9 +282,9 @@ private fun FastGalleryScrollbar(state: LazyGridState, modifier: Modifier = Modi
         val thumbTop = (maxHeight - thumbHeight) * scrollFraction
 
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.CenterEnd) {
-            Box(modifier = Modifier.fillMaxHeight().size(width = 3.dp, height = maxHeight).background(DarkBorder))
+            Box(modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(3.dp).background(DarkBorder))
             Box(
-                modifier = Modifier.offset(y = thumbTop).size(width = 7.dp, height = thumbHeight)
+                modifier = Modifier.align(Alignment.TopEnd).offset(y = thumbTop).size(width = 7.dp, height = thumbHeight)
                     .background(CyanAccent, RectangleShape).border(1.dp, Color.White.copy(alpha = 0.6f), RectangleShape)
             )
         }
