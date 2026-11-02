@@ -56,6 +56,7 @@ fun DeviceGalleryBottomBar(
     onRefresh: () -> Unit,
     onOpenPresetGallery: () -> Unit,
     onOpenCamera: () -> Unit,
+    onOpenFullGallery: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -247,6 +248,26 @@ fun DeviceGalleryBottomBar(
                         }
                     }
                 }
+            }
+        }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                    .background(DarkBackground, RectangleShape)
+                    .border(1.dp, CyanAccent, RectangleShape)
+                    .clickable { onOpenFullGallery() }
+                    .padding(vertical = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "VER TODA LA GALERÍA",
+                    color = CyanAccent,
+                    fontSize = 8.sp,
+                    fontFamily = PressStart2PFontFamily,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
     }
