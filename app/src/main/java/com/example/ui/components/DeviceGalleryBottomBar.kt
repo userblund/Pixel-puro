@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -13,11 +14,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -59,6 +65,15 @@ fun DeviceGalleryBottomBar(
     onOpenFullGallery: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val preferences = remember(context) {
+        context.getSharedPreferences("pixel_puro_gallery", android.content.Context.MODE_PRIVATE)
+    }
+    var visiblePhotoCount by remember {
+        mutableStateOf(preferences.getInt("bottom_visible_photo_count", 3).coerceIn(1, 16))
+    }
+    var isPhotoCountMenuExpanded by remember { mutableStateOf(false) }
+
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -70,17 +85,14 @@ fun DeviceGalleryBottomBar(
             .testTag("device_gallery_bottom_bar")
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            // Header Row
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 2.dp)
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     PixelImageIcon(tint = CyanAccent, size = 12.dp)
-                    Spacer(modifier = Modifier.width(6.dp))
+                    Spacer(modifier = Modifier.size(6.dp))
                     Text(
                         text = "GALERIA DISPOSITIVO",
                         color = Color.White,
@@ -89,33 +101,63 @@ fun DeviceGalleryBottomBar(
                         fontWeight = FontWeight.Bold
                     )
                     if (photos.isNotEmpty()) {
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "[${photos.size}]",
-                            color = EmeraldAccent,
-                            fontSize = 8.sp,
-                            fontFamily = SilkscreenFontFamily
-                        )
+                        Spacer(modifier = Modifier.size(6.dp))
+                        Text("[${photos.size}]", color = EmeraldAccent, fontSize = 8.sp, fontFamily = SilkscreenFontFamily)
                     }
                 }
-
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box {
+                        Text(
+                            text = "VISTAS: $visiblePhotoCount",
+                            color = CyanAccent,
+                            fontSize = 7.sp,
+                            fontFamily = SilkscreenFontFamily,
+                            modifier = Modifier.clickable { isPhotoCountMenuExpanded = true }.padding(3.dp)
+                        )
+                        DropdownMenu(
+                            expanded = isPhotoCountMenuExpanded,
+                            onDismissRequest = { isPhotoCountMenuExpanded = false },
+                            modifier = Modifier.background(DarkSurface)
+                        ) {
+                            (1..16).forEach { count ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = "$count IMAGEN${if (count == 1) "" else "ES"}",
+                                            color = if (count == visiblePhotoCount) CyanAccent else Color.White,
+                                            fontSize = 11.sp,
+                                            fontFamily = SilkscreenFontFamily
+                                        )
+                                    },
+                                    onClick = {
+                                        visiblePhotoCount = count
+                                        preferences.edit().putInt("bottom_visible_photo_count", count).apply()
+                                        isPhotoCountMenuExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
                     Box(
-                        modifier = Modifier
-                            .background(DarkBackground, RectangleShape)
+                        modifier = Modifier.background(DarkBackground, RectangleShape)
+                            .border(1.dp, CyanAccent, RectangleShape)
+                            .clickable { onOpenCamera() }.padding(horizontal = 5.dp, vertical = 3.dp)
+                    ) {
+                        Text("CAM", color = CyanAccent, fontSize = 7.sp, fontFamily = PressStart2PFontFamily)
+                    }
+                    Spacer(modifier = Modifier.size(4.dp))
+                    Box(
+                        modifier = Modifier.background(DarkBackground, RectangleShape)
                             .border(1.dp, DarkBorder, RectangleShape)
-                            .clickable { onRefresh() }
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .clickable { onRefresh() }.padding(horizontal = 6.dp, vertical = 3.dp)
                     ) {
                         Text("RECARGAR", color = TextSecondary, fontSize = 7.sp, fontFamily = SilkscreenFontFamily)
                     }
-                    Spacer(modifier = Modifier.width(4.dp))
+                    Spacer(modifier = Modifier.size(4.dp))
                     Box(
-                        modifier = Modifier
-                            .background(DarkBackground, RectangleShape)
+                        modifier = Modifier.background(DarkBackground, RectangleShape)
                             .border(1.dp, CyanAccent, RectangleShape)
-                            .clickable { onOpenPresetGallery() }
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .clickable { onOpenPresetGallery() }.padding(horizontal = 6.dp, vertical = 3.dp)
                     ) {
                         Text("PATRONES", color = CyanAccent, fontSize = 7.sp, fontFamily = SilkscreenFontFamily)
                     }
@@ -125,15 +167,11 @@ fun DeviceGalleryBottomBar(
             Spacer(modifier = Modifier.height(4.dp))
 
             if (!hasPermission) {
-                // Permission Request Prompt
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 4.dp)
-                        .background(DarkBackground, RectangleShape)
-                        .border(1.dp, DarkBorder, RectangleShape)
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp)
+                        .background(DarkBackground, RectangleShape).border(1.dp, DarkBorder, RectangleShape)
                         .padding(horizontal = 8.dp, vertical = 6.dp)
                 ) {
                     Text(
@@ -143,106 +181,54 @@ fun DeviceGalleryBottomBar(
                         fontFamily = SilkscreenFontFamily,
                         modifier = Modifier.weight(1f)
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    PixelButton(
-                        onClick = onRequestPermission,
-                        backgroundColor = CyanAccent,
-                        textColor = Color.Black
-                    ) {
-                        Text(
-                            text = "ACTIVAR",
-                            color = Color.Black,
-                            fontSize = 8.sp,
-                            fontFamily = SilkscreenFontFamily,
-                            fontWeight = FontWeight.Bold
-                        )
+                    Spacer(modifier = Modifier.size(6.dp))
+                    PixelButton(onClick = onRequestPermission, backgroundColor = CyanAccent, textColor = Color.Black) {
+                        Text("ACTIVAR", color = Color.Black, fontSize = 8.sp, fontFamily = SilkscreenFontFamily, fontWeight = FontWeight.Bold)
                     }
                 }
             } else if (photos.isEmpty()) {
                 Box(
                     contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 10.dp)
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 10.dp)
                 ) {
-                    Text(
-                        text = "Sin fotos en memoria externa",
-                        color = TextMuted,
-                        fontSize = 8.sp,
-                        fontFamily = SilkscreenFontFamily
-                    )
+                    Text("Sin fotos en memoria externa", color = TextMuted, fontSize = 8.sp, fontFamily = SilkscreenFontFamily)
                 }
             } else {
-                // Horizontal scrolling photo strip
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    contentPadding = PaddingValues(horizontal = 10.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    // First item: Snap photo with Camera
-                    item {
-                        Box(
-                            modifier = Modifier
-                                .size(width = 60.dp, height = 60.dp)
-                                .pixelShadow(2.dp, 2.dp, Color.Black)
-                                .background(DarkSurface, RectangleShape)
-                                .border(1.dp, CyanAccent, RectangleShape)
-                                .clickable { onOpenCamera() },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                PixelCameraIcon(tint = CyanAccent, size = 16.dp)
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = "CAM",
-                                    color = CyanAccent,
-                                    fontSize = 7.sp,
-                                    fontFamily = PressStart2PFontFamily
-                                )
-                            }
-                        }
-                    }
-
-                    items(photos, key = { it.id }) { photo ->
-                        val isSelected = selectedItem?.id == photo.id
-
-                        Box(
-                            modifier = Modifier
-                                .size(width = 60.dp, height = 60.dp)
-                                .pixelShadow(2.dp, 2.dp, Color.Black)
-                                .background(DarkBackground, RectangleShape)
-                                .border(
-                                    width = if (isSelected) 2.dp else 1.dp,
-                                    color = if (isSelected) CyanAccent else DarkBorder,
-                                    shape = RectangleShape
-                                )
-                                .clickable { onSelectPhoto(photo) }
-                        ) {
-                            AsyncImage(
-                                model = ImageRequest.Builder(LocalContext.current)
-                                    .data(photo.uri)
-                                    .crossfade(false)
-                                    .build(),
-                                contentDescription = photo.name,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.matchParentSize()
-                            )
-
-                            // Tiny pixel badge if it's a screenshot
-                            if (photo.isScreenshot) {
-                                Box(
-                                    modifier = Modifier
-                                        .align(Alignment.BottomStart)
-                                        .background(Color.Black.copy(alpha = 0.85f), RectangleShape)
-                                        .border(1.dp, EmeraldAccent, RectangleShape)
-                                        .padding(horizontal = 2.dp, vertical = 1.dp)
-                                ) {
-                                    Text(
-                                        text = "CAP",
-                                        color = EmeraldAccent,
-                                        fontSize = 6.sp,
-                                        fontFamily = PressStart2PFontFamily
+                BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                    val tileSize = ((maxWidth - 20.dp - (visiblePhotoCount - 1) * 4.dp) / visiblePhotoCount).coerceAtLeast(12.dp)
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        items(photos, key = { it.id }) { photo ->
+                            val isSelected = selectedItem?.id == photo.id
+                            Box(
+                                modifier = Modifier.size(tileSize)
+                                    .pixelShadow(2.dp, 2.dp, Color.Black)
+                                    .background(DarkBackground, RectangleShape)
+                                    .border(
+                                        width = if (isSelected) 2.dp else 1.dp,
+                                        color = if (isSelected) CyanAccent else DarkBorder,
+                                        shape = RectangleShape
                                     )
+                                    .clickable { onSelectPhoto(photo) }
+                            ) {
+                                AsyncImage(
+                                    model = ImageRequest.Builder(LocalContext.current).data(photo.uri).crossfade(false).build(),
+                                    contentDescription = photo.name,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.matchParentSize()
+                                )
+                                if (photo.isScreenshot && tileSize >= 34.dp) {
+                                    Box(
+                                        modifier = Modifier.align(Alignment.BottomStart)
+                                            .background(Color.Black.copy(alpha = 0.85f), RectangleShape)
+                                            .border(1.dp, EmeraldAccent, RectangleShape)
+                                            .padding(horizontal = 2.dp, vertical = 1.dp)
+                                    ) {
+                                        Text("CAP", color = EmeraldAccent, fontSize = 6.sp, fontFamily = PressStart2PFontFamily)
+                                    }
                                 }
                             }
                         }
@@ -251,13 +237,9 @@ fun DeviceGalleryBottomBar(
             }
 
             Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 4.dp)
-                    .background(DarkBackground, RectangleShape)
-                    .border(1.dp, CyanAccent, RectangleShape)
-                    .clickable { onOpenFullGallery() }
-                    .padding(vertical = 8.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp)
+                    .background(DarkBackground, RectangleShape).border(1.dp, CyanAccent, RectangleShape)
+                    .clickable { onOpenFullGallery() }.padding(vertical = 8.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
