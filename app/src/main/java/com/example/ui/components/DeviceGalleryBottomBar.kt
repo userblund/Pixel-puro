@@ -249,7 +249,6 @@ fun DeviceGalleryBottomBar(
                     }
                 }
             }
-        }
 
             Box(
                 modifier = Modifier
