@@ -147,7 +147,7 @@ fun PixelCameraScreen(
     var flashState by remember { mutableIntStateOf(0) }
     var isCapturing by remember { mutableStateOf(false) }
 
-    // Live Real-Time Optical Telemetry for PNG Maximum Quality (RGBA_8888 (análisis) colors)
+    // Telemetría del flujo de análisis RGBA_8888; no representa la calidad RAW de la foto.
     var shadowClippingPercent by remember { mutableFloatStateOf(0f) }
     var highlightClippingPercent by remember { mutableFloatStateOf(0f) }
     var dynamicRangeEv by remember { mutableFloatStateOf(10.5f) }
@@ -224,7 +224,7 @@ fun PixelCameraScreen(
             val capture = captureBuilder.build()
             rawCaptureSupported = supportsRawJpeg
 
-            // Live Image Analysis to monitor 32-bit RGBA optical certainty in real-time
+            // ImageAnalysis convierte fotogramas del flujo de análisis a RGBA_8888.
             val imageAnalysis = ImageAnalysis.Builder()
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
@@ -517,7 +517,7 @@ fun PixelCameraScreen(
             }
         }
 
-        // 3. Top HUD: Instructor & Optical Certainty Guía (Epistemología de Pinocho + PNG 32-bit RGBA)
+        // 3. Top HUD: guía de exposición y estado real de los formatos.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1077,9 +1077,9 @@ fun PixelCameraScreen(
                     Spacer(modifier = Modifier.height(10.dp))
 
                     Text(
-                        text = "¿Por qué PNG Máxima Calidad en lugar de JPG?\n" +
-                               "El formato JPG realiza submuestreo de croma 4:2:0 y cuantización con pérdida por bloques discretos. La computadora inventa datos (heurística) y descarta información irrecuperable.\n\n" +
-                               "PixelPuro captura en espacio 32-bit RGBA completo (2^32 estados discretos) y guarda en formato PNG 100% sin compresión con pérdida. De este modo, la computadora cuenta con toda la información física captada por el sensor para darte certeza absoluta.",
+                        text = "¿Qué conserva cada formato?\n" +
+                               "El flujo ImageAnalysis se convierte a RGBA_8888 para analizar fotogramas. ImageCapture no captura en RGBA_8888: cuando el dispositivo admite RAW+JPEG, PixelPuro conserva el original RAW_SENSOR como DNG y usa el JPEG simultáneo para crear el Bitmap PNG del editor.\n\n" +
+                               "El PNG evita una nueva pérdida al guardarse, pero no recupera información perdida en el JPEG. El DNG conserva datos RAW del sensor cuando el hardware lo admite; no todos los dispositivos ofrecen esa capacidad. La vista previa y la fotografía pueden diferir por resolución, encuadre, exposición y procesamiento. Ningún formato garantiza por sí solo certeza absoluta sobre la escena física.",
                         color = TextSecondary,
                         fontSize = 8.sp,
                         fontFamily = SilkscreenFontFamily,
