@@ -224,12 +224,13 @@ fun PixelPuroApp(
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = DarkBackground,
-        contentWindowInsets = WindowInsets.safeDrawing
+        contentWindowInsets = WindowInsets(0, 0, 0, 0)
     ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .windowInsetsPadding(WindowInsets.safeDrawing)
         ) {
             // 1. Collapsible Top HUD (Positioned ABOVE the photo - NEVER covers the image)
             AnimatedVisibility(
