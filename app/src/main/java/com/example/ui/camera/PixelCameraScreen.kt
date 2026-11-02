@@ -111,7 +111,6 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.log2
 
 import com.example.util.CameraCalibrationManager
-import com.example.util.CameraCalibrationProfile
 
 private data class CameraRgbaFrame(
     val width: Int,
