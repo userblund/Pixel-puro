@@ -195,7 +195,7 @@ fun DeviceGalleryBottomBar(
                 }
             } else {
                 BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                    val tileSize = ((maxWidth - 20.dp - (visiblePhotoCount - 1).toFloat() * 4.dp) / visiblePhotoCount.toFloat()).coerceAtLeast(12.dp)
+                    val tileSize = ((maxWidth - 20.dp - 4.dp * (visiblePhotoCount - 1).toFloat()) / visiblePhotoCount.toFloat()).coerceAtLeast(12.dp)
                     LazyRow(
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                         contentPadding = PaddingValues(horizontal = 10.dp),
