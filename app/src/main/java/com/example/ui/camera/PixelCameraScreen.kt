@@ -253,8 +253,7 @@ fun PixelCameraScreen(
                 if (supportsRawJpeg) ImageCapture.OUTPUT_FORMAT_RAW_JPEG
                 else ImageCapture.OUTPUT_FORMAT_JPEG
             )
-            val capture = captureBuilder.build()
-            rawCaptureSupported = supportsRawJpeg
+            var capture = captureBuilder.build()
 
             // ImageAnalysis convierte fotogramas del flujo de análisis a RGBA_8888.
             val imageAnalysis = ImageAnalysis.Builder()
@@ -332,19 +331,41 @@ fun PixelCameraScreen(
             // observen la misma región del sensor (mismo recorte geométrico).
             val viewPort = previewView.viewPort
                 ?: throw IllegalStateException("La vista previa aún no tiene un ViewPort válido.")
-            val useCaseGroup = UseCaseGroup.Builder()
-                .setViewPort(viewPort)
-                .addUseCase(preview)
-                .addUseCase(imageAnalysis)
-                .addUseCase(capture)
-                .build()
+            fun buildUseCaseGroup(imageCapture: ImageCapture): UseCaseGroup {
+                return UseCaseGroup.Builder()
+                    .setViewPort(viewPort)
+                    .addUseCase(preview)
+                    .addUseCase(imageAnalysis)
+                    .addUseCase(imageCapture)
+                    .build()
+            }
 
-            val camera = provider.bindToLifecycle(
-                lifecycleOwner,
-                selector,
-                useCaseGroup
-            )
+            // La capacidad RAW anunciada no garantiza que la combinación de tres
+            // flujos sea aceptada por el HAL. Si el enlace RAW falla, reintentar JPEG.
+            val camera = try {
+                provider.bindToLifecycle(
+                    lifecycleOwner,
+                    selector,
+                    buildUseCaseGroup(capture)
+                )
+            } catch (rawBindError: Exception) {
+                if (!supportsRawJpeg) throw rawBindError
+                provider.unbindAll()
+                capture = ImageCapture.Builder()
+                    .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+                    .setJpegQuality(100)
+                    .setFlashMode(capFlashMode)
+                    .setOutputFormat(ImageCapture.OUTPUT_FORMAT_JPEG)
+                    .build()
+                rawCaptureSupported = false
+                provider.bindToLifecycle(
+                    lifecycleOwner,
+                    selector,
+                    buildUseCaseGroup(capture)
+                )
+            }
 
+            rawCaptureSupported = capture.outputFormat == ImageCapture.OUTPUT_FORMAT_RAW_JPEG
             activeCamera = camera
             imageCaptureInstance = capture
 
